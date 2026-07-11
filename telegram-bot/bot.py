@@ -156,24 +156,47 @@ async def yts(u,c):
     await u.message.reply_text(f"Buscando: {' '.join(c.args)} en YouTube...")
 
 async def playaudio(u,c):
-    if not c.args: return await u.message.reply_text("Usa: /playaudio cancion")
+    if not c.args:
+        await u.message.reply_text("Usa: /playaudio nombre de la canción")
+        return
+
     query = " ".join(c.args)
-    await u.message.reply_text(f"Buscando: {query} ⏳")
+    msg = await u.message.reply_text(f"Buscando: {query} ⏳")
+
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': '/tmp/downloads/%(title)s.%(ext)s',
+        'outtmpl': '/tmp/song.%(ext)s',
         'noplaylist': True,
+        'default_search': 'ytsearch1',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
         'quiet': True,
-        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}]
     }
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"ytsearch:{query}", download=True)['entries'][0]
-            filename = ydl.prepare_filename(info).rsplit(".", 1)[0] + ".mp3"
-        await c.bot.send_audio(u.effective_chat.id, audio=InputFile(filename), title=info['title'])
-        os.remove(filename)
+            info = ydl.extract_info(query, download=True)
+            if 'entries' in info:
+                info = info['entries'][0]
+            title = info.get('title', query)
+            artist = info.get('uploader', 'Artista desconocido')
+            duration = info.get('duration', 0)
+
+        await msg.edit_text(f"✅ Enviando: {title}")
+        await u.message.reply_audio(
+            audio=open('/tmp/song.mp3', 'rb'),
+            title=title,
+            performer=artist,
+            duration=duration,
+        )
+        os.remove('/tmp/song.mp3')
+
     except Exception as e:
-        await u.message.reply_text(f"❌ Error: {e}")
+        logging.exception("playaudio error")
+        await msg.edit_text("❌ Error: No encontré esa canción 😢")
 
 async def video(u,c):
     if not c.args: return await u.message.reply_text("Usa: /video link")
