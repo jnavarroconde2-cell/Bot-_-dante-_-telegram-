@@ -434,7 +434,7 @@ async def sticker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for arg in args:
         if arg.lower() == "redondo":
             redondo = True
-        elif arg.startswith(("😀","😂","😎","❤️","😭","🥵","👑","🔥","💀","✨")):
+        elif any(char in arg for char in "😀😂😎❤️😭🥵👑🔥💀✨😃"):
             emoji = arg
         else:
             texto += arg + " "
