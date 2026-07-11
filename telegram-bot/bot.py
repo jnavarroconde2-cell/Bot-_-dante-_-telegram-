@@ -3,9 +3,11 @@ import json
 import random
 import logging
 import time
+from io import BytesIO
 
 import requests
 import yt_dlp
+from PIL import Image
 from telegram import Update, ChatMember, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -417,6 +419,52 @@ async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🎨 Imagen con IA próximamente...")
 
 
+async def sticker(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        return await update.message.reply_text(
+            "❌ Responde a una foto, gif o video de máx 3s con /sticker"
+        )
+    msg = update.message.reply_to_message
+    await update.message.reply_text("⏳ Convirtiendo a sticker...")
+
+    try:
+        if msg.photo:
+            file = await msg.photo[-1].get_file()
+        elif msg.animation:
+            file = await msg.animation.get_file()
+        elif msg.video:
+            if msg.video.duration > 3:
+                return await update.message.reply_text("❌ El video debe durar máx 3 segundos")
+            file = await msg.video.get_file()
+        elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith("image/"):
+            file = await msg.document.get_file()
+        else:
+            return await update.message.reply_text("❌ Solo puedo convertir: foto, gif, video < 3s")
+
+        file_bytes = BytesIO()
+        await file.download_to_memory(out=file_bytes)
+        file_bytes.seek(0)
+
+        img = Image.open(file_bytes)
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+        img.thumbnail((512, 512), Image.LANCZOS)
+
+        canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+        canvas.paste(img, ((512 - img.width) // 2, (512 - img.height) // 2))
+
+        output = BytesIO()
+        canvas.save(output, format="WEBP")
+        output.seek(0)
+
+        await update.message.reply_sticker(sticker=output)
+        await update.message.reply_text("✅ Sticker listo!\nGuárdalo en @Stickers para hacer un pack")
+
+    except Exception as e:
+        logging.exception("sticker error")
+        await update.message.reply_text(f"❌ Error al convertir: {e}")
+
+
 # ─── Economía ─────────────────────────────────────────────────────────────────
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -651,7 +699,7 @@ def main():
         ("frase", frase), ("chiste", chiste), ("bola8", bola8), ("dado", dado),
         ("coin", coin), ("ship", ship), ("ppt", ppt), ("sorteo", sorteo),
         ("gato", gato), ("perro", perro), ("cun", cun), ("preniar", preniar),
-        ("picante", picante), ("meme", meme), ("calcular", calcular), ("imagine", imagine),
+        ("picante", picante), ("meme", meme), ("calcular", calcular), ("imagine", imagine), ("sticker", sticker),
         # Economía
         ("balance", balance), ("trabajar", trabajar), ("diario", diario),
         ("robar", robar), ("tiendaeco", tiendaeco), ("comprar", comprar),
