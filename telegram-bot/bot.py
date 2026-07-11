@@ -243,39 +243,54 @@ async def playaudio(u,c):
 async def button_handler(u,c):
     query = u.callback_query
     await query.answer()
+    data = query.data.split("_")
 
-    video_id = query.data.split("_")[1]
+    if data[0] == "dl": tipo = "audio"
+    elif data[0] == "vdl": tipo = "video"
+    else: return
+
+    video_id = data[1]
     url = f"https://www.youtube.com/watch?v={video_id}"
+    await query.edit_message_text(f"Descargando {tipo} ⏳")
 
-    await query.edit_message_text("Descargando audio ⏳")
-
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': '/tmp/song.%(ext)s',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'quiet': True,
-    }
+    if tipo == "audio":
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': '/tmp/file.%(ext)s',
+            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+            'quiet': True,
+        }
+        ext = 'mp3'
+    else:
+        ydl_opts = {
+            'format': 'best[height<=480]',
+            'outtmpl': '/tmp/file.%(ext)s',
+            'merge_output_format': 'mp4',
+            'quiet': True,
+        }
+        ext = 'mp4'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            title = info.get('title', 'Canción')
-            artist = info.get('uploader', 'Artista desconocido')
+            title = info.get('title', tipo.capitalize())
             duration = info.get('duration', 0)
 
-        await query.edit_message_text(f"✅ Enviado: {title}")
-        await c.bot.send_audio(
-            chat_id=query.message.chat_id,
-            audio=open('/tmp/song.mp3', 'rb'),
-            title=title,
-            performer=artist,
-            duration=duration,
-        )
-        os.remove('/tmp/song.mp3')
+        filesize = os.path.getsize(f'/tmp/file.{ext}')
+        if tipo == "video" and filesize > 50 * 1024 * 1024:
+            os.remove(f'/tmp/file.{ext}')
+            await query.edit_message_text(url)
+            return
+
+        await query.edit_message_text(f"✅ Subiendo: {title}")
+
+        if tipo == "audio":
+            artist = info.get('uploader', 'Artista desconocido')
+            await c.bot.send_audio(chat_id=query.message.chat_id, audio=open(f'/tmp/file.{ext}', 'rb'), title=title, performer=artist, duration=duration)
+        else:
+            await c.bot.send_video(chat_id=query.message.chat_id, video=open(f'/tmp/file.{ext}', 'rb'), caption=f"📹 {title}", duration=duration, supports_streaming=True)
+
+        os.remove(f'/tmp/file.{ext}')
 
     except Exception as e:
         logging.exception("button_handler error")
@@ -287,46 +302,29 @@ async def video(u,c):
         return
 
     query = " ".join(c.args)
-    msg = await u.message.reply_text(f"Buscando: {query} ⏳")
+    msg = await u.message.reply_text(f"Buscando opciones de: {query} ⏳")
 
-    ydl_opts = {
-        'format': 'best[height<=720]',
-        'outtmpl': '/tmp/video.%(ext)s',
-        'noplaylist': True,
-        'quiet': True,
-        'merge_output_format': 'mp4',
-        'default_search': 'ytsearch1',
-    }
+    ydl_opts = {'default_search': 'ytsearch5', 'noplaylist': True, 'quiet': True}
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=True)
-            if 'entries' in info:
-                info = info['entries'][0]
-            title = info.get('title', 'Video')
-            duration = info.get('duration', 0)
+            info = ydl.extract_info(query, download=False)
+            videos = info['entries']
 
-        await msg.edit_text(f"✅ Encontrado: {title}\nSubiendo a Telegram...")
+        keyboard = []
+        for i, v in enumerate(videos[:5]):
+            title = v['title'][:40]
+            duration = v.get('duration', 0)
+            mins, secs = divmod(duration, 60)
+            size_mb = round(v.get('filesize_approx', 0) / 1024 / 1024)
+            label = f"{i+1}. {title} [{mins}:{secs:02d}]" + (f" ~{size_mb}MB" if size_mb else "")
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"vdl_{v['id']}")])
 
-        filesize = os.path.getsize('/tmp/video.mp4')
-        if filesize > 50 * 1024 * 1024:
-            os.remove('/tmp/video.mp4')
-            await msg.edit_text("❌ El video pesa más de 50MB. Telegram no deja subirlo.\nPrueba con uno más corto.")
-            return
-
-        await c.bot.send_video(
-            chat_id=u.message.chat_id,
-            video=open('/tmp/video.mp4', 'rb'),
-            caption=f"📹 {title}",
-            duration=duration,
-            supports_streaming=True,
-        )
-        os.remove('/tmp/video.mp4')
-        await msg.delete()
+        await msg.edit_text(f"Elige un video para: *{query}*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     except Exception as e:
         logging.exception("video error")
-        await msg.edit_text(f"❌ Error: {e}")
+        await msg.edit_text(f"❌ Error buscando: {e}")
 
 async def ytmp3(u,c): await playaudio(u,c)
 
@@ -390,7 +388,7 @@ for cmd, fn in CMDS.items():
     app.add_handler(C(cmd, fn))
 
 app.add_handler(CallbackQueryHandler(next_meme_handler, pattern="^nextmeme_"))
-app.add_handler(CallbackQueryHandler(button_handler, pattern="^dl_"))
+app.add_handler(CallbackQueryHandler(button_handler, pattern="^(dl_|vdl_)"))
 
 print(f"Bot DANTE iniciado con {len(CMDS)} comandos")
 app.run_polling()
