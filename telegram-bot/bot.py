@@ -348,13 +348,34 @@ async def cun(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def preniar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    waifus = [
+        "https://media.giphy.com/media/3o7TKMt1VVNkHV2PaE/giphy.gif",
+        "https://media.giphy.com/media/l0HlHFRANlRoNqV0A/giphy.gif",
+        "https://i.imgur.com/8QwF3kL.jpg",
+        "https://i.imgur.com/JQ9zXvA.jpg",
+    ]
+    gif = random.choice(waifus)
+    autor = update.effective_user.first_name
+
     if update.message.reply_to_message:
-        victima = update.message.reply_to_message.from_user.first_name
+        target = update.message.reply_to_message.from_user
+        mention = target.mention_html()
+        texto = (
+            f"🤰 <b>WAIFU ALERT</b> 🤰\n\n"
+            f"{mention} está embarazada de {autor}!!\n"
+            f"Ya se viene el bebé uwu"
+        )
     elif context.args:
-        victima = context.args[0]
+        nombre = context.args[0]
+        texto = (
+            f"🤰 <b>WAIFU ALERT</b> 🤰\n\n"
+            f"{nombre} está embarazada de {autor}!!\n"
+            f"Ya se viene el bebé uwu"
+        )
     else:
-        victima = random.choice(["tu ex", "al admin", "a tu crush", "al grupo entero"])
-    await update.message.reply_text(f"🤰 DANTE preña a {victima} hoy")
+        return await update.message.reply_text("Usa: /preniar @usuario o responde a un mensaje")
+
+    await update.message.reply_animation(animation=gif, caption=texto, parse_mode="HTML")
 
 
 async def picante(update: Update, context: ContextTypes.DEFAULT_TYPE):
