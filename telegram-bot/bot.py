@@ -282,17 +282,51 @@ async def button_handler(u,c):
         await query.edit_message_text(f"❌ Error: {e}")
 
 async def video(u,c):
-    if not c.args: return await u.message.reply_text("Usa: /video link")
-    await u.message.reply_text("Descargando video... ⏳")
-    ydl_opts = {'outtmpl': '/tmp/downloads/%(title)s.%(ext)s', 'quiet': True}
+    if not c.args:
+        await u.message.reply_text("Usa: /video link o /video nombre del video")
+        return
+
+    query = " ".join(c.args)
+    msg = await u.message.reply_text(f"Buscando: {query} ⏳")
+
+    ydl_opts = {
+        'format': 'best[height<=720]',
+        'outtmpl': '/tmp/video.%(ext)s',
+        'noplaylist': True,
+        'quiet': True,
+        'merge_output_format': 'mp4',
+        'default_search': 'ytsearch1',
+    }
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(c.args[0], download=True)
-            filename = ydl.prepare_filename(info)
-        await c.bot.send_video(u.effective_chat.id, video=InputFile(filename))
-        os.remove(filename)
+            info = ydl.extract_info(query, download=True)
+            if 'entries' in info:
+                info = info['entries'][0]
+            title = info.get('title', 'Video')
+            duration = info.get('duration', 0)
+
+        await msg.edit_text(f"✅ Encontrado: {title}\nSubiendo a Telegram...")
+
+        filesize = os.path.getsize('/tmp/video.mp4')
+        if filesize > 50 * 1024 * 1024:
+            os.remove('/tmp/video.mp4')
+            await msg.edit_text("❌ El video pesa más de 50MB. Telegram no deja subirlo.\nPrueba con uno más corto.")
+            return
+
+        await c.bot.send_video(
+            chat_id=u.message.chat_id,
+            video=open('/tmp/video.mp4', 'rb'),
+            caption=f"📹 {title}",
+            duration=duration,
+            supports_streaming=True,
+        )
+        os.remove('/tmp/video.mp4')
+        await msg.delete()
+
     except Exception as e:
-        await u.message.reply_text(f"❌ Error: {e}")
+        logging.exception("video error")
+        await msg.edit_text(f"❌ Error: {e}")
 
 async def ytmp3(u,c): await playaudio(u,c)
 
