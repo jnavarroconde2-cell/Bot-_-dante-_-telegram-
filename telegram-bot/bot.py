@@ -10,7 +10,7 @@ import yt_dlp
 
 logging.basicConfig(level=logging.INFO)
 
-T = os.getenv("TELEGRAM_BOT_TOKEN")
+T = os.getenv("Token")
 os.makedirs("/tmp/downloads", exist_ok=True)
 DB_FILE = "/tmp/economia.json"
 
