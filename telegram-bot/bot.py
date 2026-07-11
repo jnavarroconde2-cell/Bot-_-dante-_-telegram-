@@ -3,8 +3,8 @@ import random
 import json
 import logging
 from io import BytesIO
-from telegram.ext import ApplicationBuilder as A, CommandHandler as C, filters as F
-from telegram import InputFile
+from telegram.ext import ApplicationBuilder as A, CommandHandler as C, CallbackQueryHandler, filters as F
+from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from PIL import Image, ImageDraw, ImageFont
 import yt_dlp
 
@@ -161,13 +161,46 @@ async def playaudio(u,c):
         return
 
     query = " ".join(c.args)
-    msg = await u.message.reply_text(f"Buscando: {query} ⏳")
+    msg = await u.message.reply_text(f"Buscando opciones de: {query} ⏳")
+
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'noplaylist': True,
+        'default_search': 'ytsearch5',
+        'quiet': True,
+        'no_warnings': True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=False)
+            videos = info['entries']
+
+        keyboard = []
+        for i, video in enumerate(videos[:5]):
+            title = video['title']
+            keyboard.append([InlineKeyboardButton(f"{i+1}. {title[:50]}", callback_data=f"dl_{video['id']}")])
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await msg.edit_text(f"Elige una opción para: *{query}*", reply_markup=reply_markup, parse_mode='Markdown')
+
+    except Exception as e:
+        logging.exception("playaudio error")
+        await msg.edit_text(f"❌ Error buscando: {e}")
+
+
+async def button_handler(u,c):
+    query = u.callback_query
+    await query.answer()
+
+    video_id = query.data.split("_")[1]
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    await query.edit_message_text("Descargando audio ⏳")
 
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': '/tmp/song.%(ext)s',
-        'noplaylist': True,
-        'default_search': 'ytsearch1',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -178,15 +211,14 @@ async def playaudio(u,c):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=True)
-            if 'entries' in info:
-                info = info['entries'][0]
-            title = info.get('title', query)
+            info = ydl.extract_info(url, download=True)
+            title = info.get('title', 'Canción')
             artist = info.get('uploader', 'Artista desconocido')
             duration = info.get('duration', 0)
 
-        await msg.edit_text(f"✅ Enviando: {title}")
-        await u.message.reply_audio(
+        await query.edit_message_text(f"✅ Enviado: {title}")
+        await c.bot.send_audio(
+            chat_id=query.message.chat_id,
             audio=open('/tmp/song.mp3', 'rb'),
             title=title,
             performer=artist,
@@ -195,8 +227,8 @@ async def playaudio(u,c):
         os.remove('/tmp/song.mp3')
 
     except Exception as e:
-        logging.exception("playaudio error")
-        await msg.edit_text("❌ Error: No encontré esa canción 😢")
+        logging.exception("button_handler error")
+        await query.edit_message_text(f"❌ Error: {e}")
 
 async def video(u,c):
     if not c.args: return await u.message.reply_text("Usa: /video link")
@@ -271,6 +303,8 @@ CMDS = {
 
 for cmd, fn in CMDS.items():
     app.add_handler(C(cmd, fn))
+
+app.add_handler(CallbackQueryHandler(button_handler))
 
 print(f"Bot DANTE iniciado con {len(CMDS)} comandos")
 app.run_polling()
