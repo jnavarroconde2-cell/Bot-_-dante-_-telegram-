@@ -2,6 +2,7 @@ import os
 import random
 import json
 import logging
+import aiohttp
 from io import BytesIO
 from telegram.ext import ApplicationBuilder as A, CommandHandler as C, CallbackQueryHandler, filters as F
 from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -12,6 +13,8 @@ logging.basicConfig(level=logging.INFO)
 
 T = os.getenv("Token")
 os.makedirs("/tmp/downloads", exist_ok=True)
+memes_vistos = set()
+CATEGORIAS = ["meme", "memes", "dankmemes", "wholesomememes", "programmingmemes", "dogmemes", "catmemes"]
 DB_FILE = "/tmp/economia.json"
 
 # --- BASE DE DATOS SIMPLE ---
@@ -65,9 +68,68 @@ async def ship(u,c): await u.message.reply_text(f"💘 Compatibilidad: {random.r
 async def cun(u,c): await u.message.reply_text(f"Tu % de cun: {random.randint(1,100)}%")
 async def preniar(u,c): await u.message.reply_text(f"Hoy preño a: @{random.choice(['usuario1','usuario2','tu crush'])}")
 async def sorteo(u,c): await u.message.reply_text(f"🎉 Ganador del sorteo: @{random.choice(['user1','user2'])}")
-async def meme(u,c): await u.message.reply_text("Meme proximamente. Usa /gato o /perro")
-async def gato(u,c): await u.message.reply_text("https://cataas.com/cat")
-async def perro(u,c): await u.message.reply_text("https://dog.ceo/api/breeds/image/random")
+async def meme(u,c):
+    categoria = c.args[0] if c.args else random.choice(CATEGORIAS)
+    await enviar_meme(u, c, categoria)
+
+async def enviar_meme(u, c, categoria):
+    if hasattr(u, 'message') and u.message:
+        msg = await u.message.reply_text(f"Buscando meme de r/{categoria} 😂 ⏳")
+        chat_id = u.message.chat_id
+    else:
+        msg = await u.callback_query.message.reply_text(f"Buscando meme de r/{categoria} 😂 ⏳")
+        chat_id = u.callback_query.message.chat_id
+
+    for _ in range(10):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://meme-api.com/gimme/{categoria}") as resp:
+                data = await resp.json()
+                meme_id = data.get("postLink")
+                if meme_id and meme_id not in memes_vistos:
+                    memes_vistos.add(meme_id)
+                    if len(memes_vistos) > 200:
+                        memes_vistos.pop()
+                    keyboard = [[InlineKeyboardButton("➡️ Siguiente meme", callback_data=f"nextmeme_{categoria}")]]
+                    await msg.delete()
+                    await c.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=data["url"],
+                        caption=f"🤣 {data['title']}\n👍 {data['ups']} upvotes | r/{data['subreddit']}",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                    )
+                    return
+
+    await msg.edit_text("❌ Me quedé sin memes nuevos. Prueba: /meme programación")
+
+async def next_meme_handler(u, c):
+    query = u.callback_query
+    await query.answer()
+    categoria = query.data.split("_")[1]
+    await query.delete()
+    await enviar_meme(query, c, categoria)
+
+async def gato(u,c):
+    msg = await u.message.reply_text("Buscando michi 🐱 ⏳")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://cataas.com/cat?json=true") as resp:
+                data = await resp.json()
+                url = f"https://cataas.com{data['url']}"
+        await msg.delete()
+        await u.message.reply_photo(photo=url, caption="😼 Otro michi para ti")
+    except Exception as e:
+        await msg.edit_text(f"❌ Error: {e}")
+
+async def perro(u,c):
+    msg = await u.message.reply_text("Buscando perrito 🐶 ⏳")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://dog.ceo/api/breeds/image/random") as resp:
+                data = await resp.json()
+        await msg.delete()
+        await u.message.reply_photo(photo=data["message"], caption="🐕 Woof! Aquí tienes")
+    except Exception as e:
+        await msg.edit_text(f"❌ Error: {e}")
 async def stickerpreniar(u,c): await u.message.reply_text("Waifu embarazada sticker ✨ proximamente")
 
 # --- STICKER ---
@@ -304,7 +366,8 @@ CMDS = {
 for cmd, fn in CMDS.items():
     app.add_handler(C(cmd, fn))
 
-app.add_handler(CallbackQueryHandler(button_handler))
+app.add_handler(CallbackQueryHandler(next_meme_handler, pattern="^nextmeme_"))
+app.add_handler(CallbackQueryHandler(button_handler, pattern="^dl_"))
 
 print(f"Bot DANTE iniciado con {len(CMDS)} comandos")
 app.run_polling()
