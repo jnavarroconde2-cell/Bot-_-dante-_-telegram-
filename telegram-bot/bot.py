@@ -349,11 +349,11 @@ async def cun(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def preniar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     waifus = [
-        "https://tenor.com/view/anime-pregnant-belly-cute-waifu-gif-1234567890",
-        "https://media.giphy.com/media/5ntdy5Ban1dIY/giphy.gif",
-        "https://media.giphy.com/media/3ogTvTqMMoG92LD6FW/giphy.gif",
-        "https://i.imgur.com/KpL9qYz.gif",
-        "https://i.imgur.com/9ZxYwQb.jpg",
+        "https://media.giphy.com/media/L1R1tvI9svkIW/giphy.gif",
+        "https://media.giphy.com/media/3o7btPCcdNniyUOyWg/giphy.gif",
+        "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif",
+        "https://media.tenor.com/0QpKqQZQZqEAAAAC/anime-pregnant.gif",
+        "https://media.tenor.com/2Q9Q9Q9Q9Q9AAAAC/waifu-anime.gif",
     ]
     gif = random.choice(waifus)
     autor = update.effective_user.first_name
