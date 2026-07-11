@@ -421,66 +421,91 @@ async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def sticker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
-        return await update.message.reply_text(
-            "❌ Responde a una foto, gif o video de máx 3s con /sticker\n"
-            "Opcional: `/sticker texto:hola emoji:😂`",
-            parse_mode="Markdown",
-        )
+        return await update.message.reply_text("❌ Responde a una foto con `/sticker texto redondo emoji`", parse_mode="Markdown")
+
     msg = update.message.reply_to_message
-    args = " ".join(context.args) if context.args else ""
+    args = context.args  # lista de palabras
 
+    # Detectar opciones
     texto = ""
-    emoji = "😎"
-    if "texto:" in args:
-        texto = args.split("texto:")[1].split("emoji:")[0].strip()
-    if "emoji:" in args:
-        emoji = args.split("emoji:")[1].strip()
+    redondo = False
+    emoji = ""
 
-    await update.message.reply_text("⏳ Convirtiendo a sticker HD...")
+    for arg in args:
+        if arg.lower() == "redondo":
+            redondo = True
+        elif arg.startswith(("😀","😂","😎","❤️","😭","🥵","👑","🔥","💀","✨")):
+            emoji = arg
+        else:
+            texto += arg + " "
+    texto = texto.strip()
+
+    await update.message.reply_text("⏳ Haciendo sticker...")
+
+    # Detectar archivo
+    if msg.photo:
+        file = await msg.photo[-1].get_file()
+    elif msg.animation:
+        file = await msg.animation.get_file()
+    elif msg.video:
+        if msg.video.duration > 3:
+            return await update.message.reply_text("❌ Max 3 segundos")
+        file = await msg.video.get_file()
+    elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith("image/"):
+        file = await msg.document.get_file()
+    else:
+        return await update.message.reply_text("❌ Solo foto, gif, video < 3s")
+
+    file_bytes = BytesIO()
+    await file.download_to_memory(out=file_bytes)
+    file_bytes.seek(0)
 
     try:
-        if msg.photo:
-            file = await msg.photo[-1].get_file()
-        elif msg.animation:
-            file = await msg.animation.get_file()
-        elif msg.video:
-            if msg.video.duration > 3:
-                return await update.message.reply_text("❌ El video debe durar máx 3 segundos")
-            file = await msg.video.get_file()
-        elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith("image/"):
-            file = await msg.document.get_file()
-        else:
-            return await update.message.reply_text("❌ Solo puedo convertir: foto, gif, video < 3s")
-
-        file_bytes = BytesIO()
-        await file.download_to_memory(out=file_bytes)
-        file_bytes.seek(0)
-
         img = Image.open(file_bytes).convert("RGBA")
-        img.thumbnail((512, 512), Image.LANCZOS)
+        img.thumbnail((500, 500), Image.LANCZOS)
 
+        # BORDE BLANCO
+        borde = Image.new("RGBA", (img.width + 12, img.height + 12), (255, 255, 255, 255))
+        borde.paste(img, (6, 6), img)
+        img = borde
+
+        # CANVAS 512x512
         canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
-        canvas.paste(img, ((512 - img.width) // 2, (512 - img.height) // 2))
 
-        if texto:
-            from PIL import ImageDraw, ImageFont
+        # SI ES REDONDO
+        if redondo:
+            mask = Image.new("L", (512, 512), 0)
+            draw_mask = ImageDraw.Draw(mask)
+            draw_mask.ellipse((0, 0, 512, 512), fill=255)
+            canvas.paste(img, ((512 - img.width) // 2, (512 - img.height) // 2), img)
+            canvas.putalpha(mask)
+        else:
+            canvas.paste(img, ((512 - img.width) // 2, (512 - img.height) // 2), img)
+
+        # TEXTO + EMOJI ABAJO
+        if texto or emoji:
             draw = ImageDraw.Draw(canvas)
             try:
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 42)
             except Exception:
                 font = ImageFont.load_default()
-            bbox = draw.textbbox((0, 0), texto, font=font)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            draw.rectangle([(0, 512 - text_h - 20), (512, 512)], fill=(0, 0, 0, 150))
-            draw.text((256 - text_w // 2, 512 - text_h - 10), texto, font=font, fill="white")
+
+            final_text = f"{texto} {emoji}".strip()
+            text_w, text_h = draw.textbbox((0, 0), final_text, font=font)[2:]
+            x = 256 - text_w // 2
+            y = 512 - text_h - 10
+
+            # Contorno
+            for adj in [-2, -1, 0, 1, 2]:
+                draw.text((x + adj, y + adj), final_text, font=font, fill="black")
+            draw.text((x, y), final_text, font=font, fill="white")
 
         output = BytesIO()
-        canvas.save(output, format="WEBP", optimize=True, quality=90)
+        canvas.save(output, format="WEBP")
         output.seek(0)
 
         await update.message.reply_sticker(sticker=output)
-        await update.message.reply_text(f"✅ Sticker listo {emoji}\n\nGuárdalo en @Stickers o úsalo ya!")
+        await update.message.reply_text("✅ Listo rey 😎")
 
     except Exception as e:
         logging.exception("sticker error")
