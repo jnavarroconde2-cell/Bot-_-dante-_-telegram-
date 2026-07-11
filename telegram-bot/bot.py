@@ -68,17 +68,8 @@ async def ship(u,c): await u.message.reply_text(f"💘 Compatibilidad: {random.r
 async def cun(u,c): await u.message.reply_text(f"Tu % de cun: {random.randint(1,100)}%")
 async def preniar(u,c): await u.message.reply_text(f"Hoy preño a: @{random.choice(['usuario1','usuario2','tu crush'])}")
 async def sorteo(u,c): await u.message.reply_text(f"🎉 Ganador del sorteo: @{random.choice(['user1','user2'])}")
-async def meme(u,c):
-    categoria = c.args[0] if c.args else random.choice(CATEGORIAS)
-    await enviar_meme(u, c, categoria)
-
-async def enviar_meme(u, c, categoria):
-    if hasattr(u, 'message') and u.message:
-        msg = await u.message.reply_text(f"Buscando meme de r/{categoria} 😂 ⏳")
-        chat_id = u.message.chat_id
-    else:
-        msg = await u.callback_query.message.reply_text(f"Buscando meme de r/{categoria} 😂 ⏳")
-        chat_id = u.callback_query.message.chat_id
+async def enviar_meme(c, categoria, chat_id):
+    msg = await c.bot.send_message(chat_id=chat_id, text=f"Buscando meme de r/{categoria} 😂 ⏳")
 
     for _ in range(10):
         async with aiohttp.ClientSession() as session:
@@ -101,35 +92,33 @@ async def enviar_meme(u, c, categoria):
 
     await msg.edit_text("❌ Me quedé sin memes nuevos. Prueba: /meme programación")
 
+async def meme(u,c):
+    categoria = c.args[0] if c.args else random.choice(CATEGORIAS)
+    await enviar_meme(c, categoria, u.message.chat_id)
+
 async def next_meme_handler(u, c):
     query = u.callback_query
     await query.answer()
     categoria = query.data.split("_")[1]
-    await query.delete()
-    await enviar_meme(query, c, categoria)
+    await query.message.delete()
+    await enviar_meme(c, categoria, query.message.chat_id)
 
 async def gato(u,c):
     msg = await u.message.reply_text("Buscando michi 🐱 ⏳")
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get("https://cataas.com/cat?json=true") as resp:
-                data = await resp.json()
-                url = f"https://cataas.com{data['url']}"
-        await msg.delete()
-        await u.message.reply_photo(photo=url, caption="😼 Otro michi para ti")
-    except Exception as e:
-        await msg.edit_text(f"❌ Error: {e}")
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://cataas.com/cat?json=true") as resp:
+            data = await resp.json()
+            url = f"https://cataas.com{data['url']}"
+    await msg.delete()
+    await u.message.reply_photo(photo=url, caption="😼 Otro michi para ti")
 
 async def perro(u,c):
     msg = await u.message.reply_text("Buscando perrito 🐶 ⏳")
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get("https://dog.ceo/api/breeds/image/random") as resp:
-                data = await resp.json()
-        await msg.delete()
-        await u.message.reply_photo(photo=data["message"], caption="🐕 Woof! Aquí tienes")
-    except Exception as e:
-        await msg.edit_text(f"❌ Error: {e}")
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://dog.ceo/api/breeds/image/random") as resp:
+            data = await resp.json()
+    await msg.delete()
+    await u.message.reply_photo(photo=data["message"], caption="🐕 Woof! Aquí tienes")
 async def stickerpreniar(u,c): await u.message.reply_text("Waifu embarazada sticker ✨ proximamente")
 
 # --- STICKER ---
