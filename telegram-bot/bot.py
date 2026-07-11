@@ -6,8 +6,8 @@ import time
 
 import requests
 import yt_dlp
-from telegram import Update, ChatMember
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update, ChatMember, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -17,24 +17,24 @@ logging.basicConfig(
 ARCHIVO = "/tmp/economia.json"
 
 TIENDA_ITEMS = {
-    "espada":   {"precio": 500,  "desc": "⚔️ Espada del robo +20%"},
-    "escudo":   {"precio": 400,  "desc": "🛡️ Escudo anti-robo"},
-    "amuleto":  {"precio": 300,  "desc": "🧿 Amuleto de la suerte"},
-    "varita":   {"precio": 600,  "desc": "🪄 Varita mágica"},
-    "corona":   {"precio": 1000, "desc": "👑 Corona de DANTE"},
+    "espada":  {"precio": 500,  "desc": "⚔️ Espada del robo +20%"},
+    "escudo":  {"precio": 400,  "desc": "🛡️ Escudo anti-robo"},
+    "amuleto": {"precio": 300,  "desc": "🧿 Amuleto de la suerte"},
+    "varita":  {"precio": 600,  "desc": "🪄 Varita mágica"},
+    "corona":  {"precio": 1000, "desc": "👑 Corona de DANTE"},
 }
 
 GACHA_PREMIOS = [
     ("💎 Diamante", 2000),
-    ("⭐ Estrella", 800),
-    ("🎖️ Medalla", 500),
-    ("🍀 Trébol", 300),
-    ("🪨 Piedra", 50),
+    ("⭐ Estrella",   800),
+    ("🎖️ Medalla",   500),
+    ("🍀 Trébol",    300),
+    ("🪨 Piedra",     50),
 ]
 GACHA_PESO = [5, 15, 25, 30, 25]
 
 
-# ─── Economía helpers ────────────────────────────────────────────────────────
+# ─── Economía helpers ──────────────────────────────────────────────────────────
 
 def cargar_datos() -> dict:
     try:
@@ -55,19 +55,17 @@ def get_user(data: dict, uid: str) -> dict:
     return data[uid]
 
 
-# ─── Verificar admin ─────────────────────────────────────────────────────────
+# ─── Admin helper ─────────────────────────────────────────────────────────────
 
 async def es_admin(update: Update) -> bool:
-    chat = update.effective_chat
-    user = update.effective_user
     try:
-        member = await chat.get_member(user.id)
+        member = await update.effective_chat.get_member(update.effective_user.id)
         return member.status in [ChatMember.ADMINISTRATOR, ChatMember.OWNER]
     except Exception:
         return False
 
 
-# ─── Básicos ─────────────────────────────────────────────────────────────────
+# ─── Básicos ──────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👑 DANTE BOT ON\nEscribe /help para ver todo")
@@ -79,7 +77,11 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 Básicos\n"
         "/start  /ping  /help\n\n"
         "🎵 Música\n"
-        "/playaudio nombre\n\n"
+        "/playaudio nombre — busca y elige con botones\n\n"
+        "📥 Descargas\n"
+        "/video link — descargar video YouTube\n"
+        "/ytmp3 link — descargar audio MP3\n"
+        "/yts nombre — buscar videos\n\n"
         "🎮 Entretenimiento\n"
         "/cun  /preniar  /meme  /picante\n"
         "/frase  /chiste  /dado  /coin\n"
@@ -90,7 +92,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/calcular operacion\n\n"
         "💰 Economía\n"
         "/balance  /trabajar  /diario\n"
-        "/robar (responde a un mensaje)\n"
+        "/robar (responde un mensaje)\n"
         "/tiendaeco  /comprar item\n"
         "/inventario  /gacha\n\n"
         "🔒 Solo admins\n"
@@ -105,38 +107,151 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("PONG 🏓 El bot está vivo")
 
 
-# ─── Música ──────────────────────────────────────────────────────────────────
+# ─── Música con botones inline ────────────────────────────────────────────────
 
 async def playaudio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         return await update.message.reply_text("Usa: /playaudio nombre de la canción")
     nombre = " ".join(context.args)
     msg = await update.message.reply_text(f"🔍 Buscando: {nombre}... ⏳")
-
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": "/tmp/song.%(ext)s",
-        "postprocessors": [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
-        ],
-        "quiet": True,
-        "noplaylist": True,
-        "default_search": "ytsearch",
-    }
     try:
+        ydl_opts = {"quiet": True, "noplaylist": True, "extract_flat": True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"ytsearch1:{nombre}", download=True)
-            titulo = info["entries"][0]["title"]
-        await msg.delete()
-        with open("/tmp/song.mp3", "rb") as audio_file:
-            await update.message.reply_audio(audio=audio_file, title=titulo, caption=f"🎵 {titulo}")
-        os.remove("/tmp/song.mp3")
+            info = ydl.extract_info(f"ytsearch5:{nombre}", download=False)
+
+        teclado = []
+        for i, entry in enumerate(info["entries"]):
+            titulo = (entry.get("title") or "Sin título")[:45]
+            dur = entry.get("duration") or 0
+            mins, secs = divmod(int(dur), 60)
+            btn = InlineKeyboardButton(
+                f"{i+1}. {titulo} ({mins}:{secs:02d})",
+                callback_data=f"play_{entry['id']}",
+            )
+            teclado.append([btn])
+
+        await msg.edit_text("🎵 Elige una canción:", reply_markup=InlineKeyboardMarkup(teclado))
     except Exception:
         logging.exception("playaudio error")
-        await msg.edit_text("😢 No encontré esa canción. Prueba con menos palabras")
+        await msg.edit_text("😢 No encontré nada. Intenta con otro nombre")
 
 
-# ─── Entretenimiento ─────────────────────────────────────────────────────────
+async def boton_play(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    video_id = query.data.split("_", 1)[1]
+    link = f"https://www.youtube.com/watch?v={video_id}"
+    await query.edit_message_text("📥 Descargando audio... ⏳")
+    try:
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": "/tmp/song.%(ext)s",
+            "postprocessors": [
+                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+            ],
+            "quiet": True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(link, download=True)
+            titulo = info.get("title", "Audio")
+
+        with open("/tmp/song.mp3", "rb") as f:
+            await query.message.reply_audio(audio=f, title=titulo, caption=f"🎵 {titulo}")
+        os.remove("/tmp/song.mp3")
+        await query.edit_message_text(f"✅ Enviado: {titulo}")
+    except Exception:
+        logging.exception("boton_play error")
+        await query.edit_message_text("😢 Error al descargar. Intenta con otra canción")
+
+
+# ─── Descargas ────────────────────────────────────────────────────────────────
+
+async def video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        return await update.message.reply_text("Usa: /video https://youtube.com/watch?v=...")
+    link = context.args[0]
+    msg = await update.message.reply_text("📥 Descargando video... ⏳ (puede tardar)")
+    try:
+        ydl_opts = {
+            "format": "mp4[height<=720]/best[height<=720]/best",
+            "outtmpl": "/tmp/video.%(ext)s",
+            "quiet": True,
+            "noplaylist": True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(link, download=True)
+            titulo = info.get("title", "Video")
+            filename = ydl.prepare_filename(info)
+
+        # Find the downloaded file
+        base = os.path.splitext(filename)[0]
+        for ext in ["mp4", "mkv", "webm"]:
+            path = f"{base}.{ext}" if not filename.endswith(ext) else filename
+            if os.path.exists(path):
+                break
+
+        await msg.delete()
+        with open(path, "rb") as f:
+            await update.message.reply_video(video=f, caption=f"🎬 {titulo}", supports_streaming=True)
+        os.remove(path)
+    except Exception:
+        logging.exception("video error")
+        await msg.edit_text("😢 No pude descargar. El video puede ser muy largo o estar restringido")
+
+
+async def ytmp3(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        return await update.message.reply_text("Usa: /ytmp3 https://youtube.com/watch?v=...")
+    link = context.args[0]
+    msg = await update.message.reply_text("🎵 Convirtiendo a MP3... ⏳")
+    try:
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": "/tmp/audio.%(ext)s",
+            "postprocessors": [
+                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+            ],
+            "quiet": True,
+            "noplaylist": True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(link, download=True)
+            titulo = info.get("title", "Audio")
+
+        await msg.delete()
+        with open("/tmp/audio.mp3", "rb") as f:
+            await update.message.reply_audio(audio=f, title=titulo, caption=f"🎵 {titulo}")
+        os.remove("/tmp/audio.mp3")
+    except Exception:
+        logging.exception("ytmp3 error")
+        await msg.edit_text("😢 No pude convertir ese link")
+
+
+async def yts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        return await update.message.reply_text("Usa: /yts nombre de la canción")
+    nombre = " ".join(context.args)
+    msg = await update.message.reply_text(f"🔍 Buscando: {nombre}...")
+    try:
+        ydl_opts = {"quiet": True, "noplaylist": True, "extract_flat": True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"ytsearch5:{nombre}", download=False)
+
+        lines = [f"🔎 Resultados para: {nombre}\n"]
+        for i, entry in enumerate(info["entries"]):
+            titulo = (entry.get("title") or "Sin título")[:50]
+            dur = entry.get("duration") or 0
+            mins, secs = divmod(int(dur), 60)
+            vid_id = entry["id"]
+            lines.append(f"{i+1}. {titulo} ({mins}:{secs:02d})\n   youtube.com/watch?v={vid_id}")
+
+        await msg.edit_text("\n".join(lines))
+    except Exception:
+        logging.exception("yts error")
+        await msg.edit_text("😢 No encontré resultados")
+
+
+# ─── Entretenimiento ──────────────────────────────────────────────────────────
 
 async def frase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     frases = [
@@ -183,11 +298,9 @@ async def coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ship(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         return await update.message.reply_text("Usa: /ship @persona1 @persona2")
-    porcentaje = random.randint(1, 100)
-    emoji = "💘" if porcentaje > 70 else "💔" if porcentaje < 30 else "💕"
-    await update.message.reply_text(
-        f"{emoji} {context.args[0]} x {context.args[1]} = {porcentaje}% compatible"
-    )
+    pct = random.randint(1, 100)
+    emoji = "💘" if pct > 70 else ("💔" if pct < 30 else "💕")
+    await update.message.reply_text(f"{emoji} {context.args[0]} x {context.args[1]} = {pct}% compatible")
 
 
 async def ppt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -211,7 +324,7 @@ async def ppt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def sorteo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ganadores = ["Tú 🎉", "El admin 👀", "Alguien del chat 🙈", "Nadie, está arreglado 😂"]
-    await update.message.reply_text(f"🎉 El ganador del sorteo es: {random.choice(ganadores)}")
+    await update.message.reply_text(f"🎉 El ganador es: {random.choice(ganadores)}")
 
 
 async def gato(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -235,8 +348,13 @@ async def cun(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def preniar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    victima = random.choice(["tu ex", "al admin", "a tu crush", "al grupo entero"])
-    await update.message.reply_text(f"Hoy preño a {victima} 🤰")
+    if update.message.reply_to_message:
+        victima = update.message.reply_to_message.from_user.first_name
+    elif context.args:
+        victima = context.args[0]
+    else:
+        victima = random.choice(["tu ex", "al admin", "a tu crush", "al grupo entero"])
+    await update.message.reply_text(f"🤰 DANTE preña a {victima} hoy")
 
 
 async def picante(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -263,8 +381,7 @@ async def calcular(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Usa: /calcular 10 * 3 + 2")
     expr = " ".join(context.args)
     try:
-        allowed = set("0123456789+-*/.() ")
-        if not all(c in allowed for c in expr):
+        if not all(c in "0123456789+-*/.() " for c in expr):
             raise ValueError("Caracteres no permitidos")
         resultado = eval(expr, {"__builtins__": {}})
         await update.message.reply_text(f"🧮 {expr} = {resultado}")
@@ -286,13 +403,11 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nombre = update.effective_user.first_name
     items_str = ", ".join(user["items"]) if user["items"] else "ninguno"
     await update.message.reply_text(
-        f"💰 Balance de {nombre}\n"
-        f"Dinero: ${user['dinero']}\n"
-        f"Items: {items_str}"
+        f"💰 Balance de {nombre}\nDinero: ${user['dinero']}\nItems: {items_str}"
     )
 
 
-COOLDOWN_TRABAJO = 3600  # 1 hora
+COOLDOWN_TRABAJO = 3600
 
 async def trabajar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = cargar_datos()
@@ -302,7 +417,7 @@ async def trabajar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     restante = COOLDOWN_TRABAJO - (ahora - user.get("trabajo_ts", 0))
     if restante > 0:
         mins = int(restante // 60)
-        return await update.message.reply_text(f"⏳ Ya trabajaste. Espera {mins} min para volver a trabajar")
+        return await update.message.reply_text(f"⏳ Espera {mins} min para volver a trabajar")
     trabajos = ["limpiaste ventanas", "repartiste volantes", "cocinaste", "programaste", "vendiste memes"]
     ganancia = random.randint(50, 300)
     user["dinero"] += ganancia
@@ -311,7 +426,7 @@ async def trabajar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"💼 {random.choice(trabajos).capitalize()} y ganaste ${ganancia} 💰")
 
 
-COOLDOWN_DIARIO = 86400  # 24 horas
+COOLDOWN_DIARIO = 86400
 
 async def diario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = cargar_datos()
@@ -322,16 +437,16 @@ async def diario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if restante > 0:
         horas = int(restante // 3600)
         mins = int((restante % 3600) // 60)
-        return await update.message.reply_text(f"⏳ Ya recibiste tu diario. Vuelve en {horas}h {mins}m")
+        return await update.message.reply_text(f"⏳ Vuelve en {horas}h {mins}m")
     user["dinero"] += 500
     user["diario_ts"] = ahora
     guardar_datos(data)
-    await update.message.reply_text("🎁 Recompensa diaria recibida: +$500 💰")
+    await update.message.reply_text("🎁 Recompensa diaria: +$500 💰")
 
 
 async def robar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
-        return await update.message.reply_text("Responde al mensaje de la persona que quieres robar")
+        return await update.message.reply_text("Responde al mensaje de quien quieres robar")
     data = cargar_datos()
     ladron_id = str(update.effective_user.id)
     victima_id = str(update.message.reply_to_message.from_user.id)
@@ -339,13 +454,11 @@ async def robar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("No puedes robarte a ti mismo 😂")
     ladron = get_user(data, ladron_id)
     victima = get_user(data, victima_id)
-    # Escudo anti-robo
     if "escudo" in victima.get("items", []):
         return await update.message.reply_text("🛡️ ¡La víctima tiene escudo! El robo falló")
     if victima["dinero"] <= 0:
         return await update.message.reply_text("Esa persona no tiene nada que robar 😂")
-    exito = random.random() < 0.55
-    if exito:
+    if random.random() < 0.55:
         robo = min(random.randint(20, 150), victima["dinero"])
         if "espada" in ladron.get("items", []):
             robo = int(robo * 1.2)
@@ -353,18 +466,18 @@ async def robar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ladron["dinero"] += robo
         guardar_datos(data)
         nombre_v = update.message.reply_to_message.from_user.first_name
-        await update.message.reply_text(f"🦹 ¡Robaste ${robo} a {nombre_v}! 💰")
+        await update.message.reply_text(f"🦹 ¡Robaste ${robo} a {nombre_v}!")
     else:
         multa = random.randint(20, 80)
         ladron["dinero"] = max(0, ladron["dinero"] - multa)
         guardar_datos(data)
-        await update.message.reply_text(f"👮 ¡Te cacharon robando! Pagas multa de ${multa}")
+        await update.message.reply_text(f"👮 ¡Te cacharon! Pagas multa de ${multa}")
 
 
 async def tiendaeco(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["🛒 TIENDA DEL BOT\n"]
     for item, info in TIENDA_ITEMS.items():
-        lines.append(f"{info['desc']} — ${info['precio']}\nComando: /comprar {item}")
+        lines.append(f"{info['desc']} — ${info['precio']}\n/comprar {item}")
     await update.message.reply_text("\n".join(lines))
 
 
@@ -373,7 +486,7 @@ async def comprar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Usa: /comprar espada")
     item = context.args[0].lower()
     if item not in TIENDA_ITEMS:
-        return await update.message.reply_text(f"Item '{item}' no existe. Usa /tiendaeco para ver la lista")
+        return await update.message.reply_text(f"Item '{item}' no existe. Ve /tiendaeco")
     data = cargar_datos()
     uid = str(update.effective_user.id)
     user = get_user(data, uid)
@@ -381,7 +494,9 @@ async def comprar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if item in user["items"]:
         return await update.message.reply_text("Ya tienes ese item 🤔")
     if user["dinero"] < precio:
-        return await update.message.reply_text(f"No tienes suficiente dinero. Necesitas ${precio}, tienes ${user['dinero']}")
+        return await update.message.reply_text(
+            f"Sin dinero. Necesitas ${precio}, tienes ${user['dinero']}"
+        )
     user["dinero"] -= precio
     user["items"].append(item)
     guardar_datos(data)
@@ -392,10 +507,8 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = cargar_datos()
     user = get_user(data, str(update.effective_user.id))
     if not user["items"]:
-        return await update.message.reply_text("🎒 Tu inventario está vacío. Compra algo en /tiendaeco")
-    lines = ["🎒 TU INVENTARIO\n"]
-    for item in user["items"]:
-        lines.append(TIENDA_ITEMS[item]["desc"])
+        return await update.message.reply_text("🎒 Inventario vacío. Compra algo en /tiendaeco")
+    lines = ["🎒 TU INVENTARIO\n"] + [TIENDA_ITEMS[i]["desc"] for i in user["items"] if i in TIENDA_ITEMS]
     await update.message.reply_text("\n".join(lines))
 
 
@@ -405,14 +518,16 @@ async def gacha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(data, uid)
     costo = 300
     if user["dinero"] < costo:
-        return await update.message.reply_text(f"💸 Necesitas ${costo} para tirar gacha. Tienes ${user['dinero']}")
+        return await update.message.reply_text(
+            f"💸 Necesitas ${costo} para gacha. Tienes ${user['dinero']}"
+        )
     user["dinero"] -= costo
-    premio_nombre, premio_dinero = random.choices(GACHA_PREMIOS, weights=GACHA_PESO, k=1)[0]
-    user["dinero"] += premio_dinero
+    nombre_p, valor_p = random.choices(GACHA_PREMIOS, weights=GACHA_PESO, k=1)[0]
+    user["dinero"] += valor_p
     guardar_datos(data)
+    resultado = "¡GANASTE! 🎉" if valor_p > costo else "Mala suerte... 😢"
     await update.message.reply_text(
-        f"🎰 GACHA\nGastaste: ${costo}\nObtuviste: {premio_nombre}\nGanaste: ${premio_dinero}\n"
-        f"{'¡GANASTE!' if premio_dinero > costo else 'Mala suerte...'}"
+        f"🎰 GACHA\nGastaste: ${costo}\nObtuviste: {nombre_p}\nGanaste: ${valor_p}\n{resultado}"
     )
 
 
@@ -420,7 +535,7 @@ async def gacha(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await es_admin(update):
-        return await update.message.reply_text("🚫 Solo admins pueden usar esto")
+        return await update.message.reply_text("🚫 Solo admins")
     if not update.message.reply_to_message:
         return await update.message.reply_text("Responde al mensaje del usuario a expulsar")
     try:
@@ -434,7 +549,7 @@ async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await es_admin(update):
-        return await update.message.reply_text("🚫 Solo admins pueden usar esto")
+        return await update.message.reply_text("🚫 Solo admins")
     if not update.message.reply_to_message:
         return await update.message.reply_text("Responde al mensaje del usuario a banear")
     try:
@@ -447,7 +562,7 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await es_admin(update):
-        return await update.message.reply_text("🚫 Solo admins pueden usar esto")
+        return await update.message.reply_text("🚫 Solo admins")
     if not update.message.reply_to_message:
         return await update.message.reply_text("Responde al mensaje del usuario a advertir")
     data = cargar_datos()
@@ -457,18 +572,18 @@ async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     guardar_datos(data)
     nombre = update.message.reply_to_message.from_user.first_name
     warns = user["warns"]
-    await update.message.reply_text(f"⚠️ {nombre} recibió advertencia #{warns}")
+    await update.message.reply_text(f"⚠️ {nombre} tiene advertencia #{warns}")
     if warns >= 3:
         try:
             await update.effective_chat.ban_member(int(uid))
-            await update.message.reply_text(f"🔨 {nombre} fue baneado/a por {warns} advertencias")
+            await update.message.reply_text(f"🔨 {nombre} baneado/a por {warns} advertencias")
         except Exception:
             pass
 
 
 async def link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await es_admin(update):
-        return await update.message.reply_text("🚫 Solo admins pueden usar esto")
+        return await update.message.reply_text("🚫 Solo admins")
     try:
         inv = await update.effective_chat.create_invite_link()
         await update.message.reply_text(f"🔗 Link del grupo:\n{inv.invite_link}")
@@ -481,10 +596,7 @@ async def link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "💎 COMPRAR VIP — $5 soles\n\n"
-        "Beneficios:\n"
-        "- Música ilimitada\n"
-        "- Sin espera en /trabajar\n"
-        "- Prioridad en soporte\n\n"
+        "Beneficios:\n- Música ilimitada\n- Sin espera en /trabajar\n- Prioridad en soporte\n\n"
         "Yapea 999-999-999 y manda captura"
     )
 
@@ -506,48 +618,26 @@ def main():
 
     app = Application.builder().token(token).build()
 
+    # Callback para botones inline de música
+    app.add_handler(CallbackQueryHandler(boton_play, pattern=r"^play_"))
+
     handlers = [
-        # Básicos
-        ("start", start),
-        ("help", help_cmd),
-        ("ping", ping),
-        # Música
-        ("playaudio", playaudio),
+        ("start", start), ("help", help_cmd), ("ping", ping),
+        # Música y descargas
+        ("playaudio", playaudio), ("video", video), ("ytmp3", ytmp3), ("yts", yts),
         # Entretenimiento
-        ("frase", frase),
-        ("chiste", chiste),
-        ("bola8", bola8),
-        ("dado", dado),
-        ("coin", coin),
-        ("ship", ship),
-        ("ppt", ppt),
-        ("sorteo", sorteo),
-        ("gato", gato),
-        ("perro", perro),
-        ("cun", cun),
-        ("preniar", preniar),
-        ("picante", picante),
-        ("meme", meme),
-        ("calcular", calcular),
-        ("imagine", imagine),
+        ("frase", frase), ("chiste", chiste), ("bola8", bola8), ("dado", dado),
+        ("coin", coin), ("ship", ship), ("ppt", ppt), ("sorteo", sorteo),
+        ("gato", gato), ("perro", perro), ("cun", cun), ("preniar", preniar),
+        ("picante", picante), ("meme", meme), ("calcular", calcular), ("imagine", imagine),
         # Economía
-        ("balance", balance),
-        ("trabajar", trabajar),
-        ("diario", diario),
-        ("robar", robar),
-        ("tiendaeco", tiendaeco),
-        ("comprar", comprar),
-        ("inventario", inventario),
-        ("gacha", gacha),
+        ("balance", balance), ("trabajar", trabajar), ("diario", diario),
+        ("robar", robar), ("tiendaeco", tiendaeco), ("comprar", comprar),
+        ("inventario", inventario), ("gacha", gacha),
         # Admin
-        ("kick", kick),
-        ("ban", ban),
-        ("warn", warn),
-        ("link", link),
+        ("kick", kick), ("ban", ban), ("warn", warn), ("link", link),
         # Negocio
-        ("premium", premium),
-        ("tienda", tienda),
-        ("soporte", soporte),
+        ("premium", premium), ("tienda", tienda), ("soporte", soporte),
     ]
 
     for cmd, func in handlers:
