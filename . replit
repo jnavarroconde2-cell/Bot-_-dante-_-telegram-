@@ -1,0 +1,5 @@
+run = "python main.py"
+
+[nix]
+channel = "stable-22_11"
+packages = ["ffmpeg"]

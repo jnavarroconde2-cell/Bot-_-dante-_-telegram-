@@ -3,6 +3,7 @@ import random
 import json
 import logging
 import time
+import subprocess
 import aiohttp
 from io import BytesIO
 from telegram.ext import ApplicationBuilder as A, CommandHandler as C, CallbackQueryHandler, filters as F
@@ -152,15 +153,51 @@ async def stickerpreniar(u,c): await u.message.reply_text("Waifu embarazada stic
 # --- STICKER ---
 async def sticker(u,c):
     if not u.message.reply_to_message:
-        return await u.message.reply_text("❌ Responde a una foto con `/sticker texto redondo emoji`", parse_mode="Markdown")
+        return await u.message.reply_text(
+            "❌ Responde a una foto, gif o video con `/sticker`\n"
+            "Foto: acepta también `redondo`, texto y emojis como args",
+            parse_mode="Markdown"
+        )
 
     msg = u.message.reply_to_message
     args = c.args
 
+    # --- VIDEO / GIF → WebM animado ---
+    if msg.video or msg.animation or (msg.document and msg.document.mime_type and msg.document.mime_type.startswith("video/")):
+        await u.message.reply_text("🎬 Convirtiendo a sticker animado... espera ~10 seg 👀")
+        try:
+            if msg.video:
+                file = await msg.video.get_file()
+            elif msg.animation:
+                file = await msg.animation.get_file()
+            else:
+                file = await msg.document.get_file()
+            await file.download_to_drive("/tmp/sticker_in.mp4")
+            cmd = [
+                "ffmpeg", "-y", "-i", "/tmp/sticker_in.mp4",
+                "-vcodec", "libvpx-vp9", "-fs", "256000",
+                "-an", "-ss", "0", "-t", "3",
+                "-vf", "scale=512:512:force_original_aspect_ratio=decrease,fps=15",
+                "/tmp/sticker_out.webm"
+            ]
+            result = subprocess.run(cmd, capture_output=True)
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr.decode()[-300:])
+            with open("/tmp/sticker_out.webm", "rb") as f:
+                await u.message.reply_sticker(sticker=f)
+            await u.message.reply_text("✅ Sticker animado listo 😎")
+        except Exception as e:
+            logging.exception("sticker video error")
+            await u.message.reply_text(f"❌ Error: {e}")
+        finally:
+            for p in ("/tmp/sticker_in.mp4", "/tmp/sticker_out.webm"):
+                if os.path.exists(p): os.remove(p)
+        return
+
+    # --- FOTO / IMAGEN → WebP estático ---
     texto = ""
     redondo = False
     emoji = ""
-
     for arg in args:
         if arg.lower() == "redondo":
             redondo = True
@@ -170,17 +207,13 @@ async def sticker(u,c):
             texto += arg + " "
     texto = texto.strip()
 
-    await u.message.reply_text("⏳ Haciendo sticker...")
-
     if msg.photo: file = await msg.photo[-1].get_file()
-    elif msg.animation: file = await msg.animation.get_file()
-    elif msg.video:
-        if msg.video.duration > 3: return await u.message.reply_text("❌ Max 3 segundos")
-        file = await msg.video.get_file()
     elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith("image/"):
         file = await msg.document.get_file()
-    else: return await u.message.reply_text("❌ Solo foto, gif, video < 3s")
+    else:
+        return await u.message.reply_text("❌ Solo foto, gif o video < 3s")
 
+    await u.message.reply_text("⏳ Haciendo sticker...")
     file_bytes = BytesIO()
     await file.download_to_memory(out=file_bytes)
     file_bytes.seek(0)
@@ -188,14 +221,10 @@ async def sticker(u,c):
     try:
         img = Image.open(file_bytes).convert("RGBA")
         img.thumbnail((500, 500), Image.LANCZOS)
-
-        # Borde blanco
         borde = Image.new("RGBA", (img.width + 12, img.height + 12), (255, 255, 255, 255))
         borde.paste(img, (6, 6), img)
         img = borde
-
         canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
-
         if redondo:
             mask = Image.new("L", (512, 512), 0)
             draw_mask = ImageDraw.Draw(mask)
@@ -204,7 +233,6 @@ async def sticker(u,c):
             canvas.putalpha(mask)
         else:
             canvas.paste(img, ((512 - img.width) // 2, (512 - img.height) // 2), img)
-
         if texto or emoji:
             draw = ImageDraw.Draw(canvas)
             try:
@@ -218,15 +246,13 @@ async def sticker(u,c):
             for adj in [-2, -1, 0, 1, 2]:
                 draw.text((x + adj, y + adj), final_text, font=font, fill="black")
             draw.text((x, y), final_text, font=font, fill="white")
-
         output = BytesIO()
         canvas.save(output, format="WEBP")
         output.seek(0)
         await u.message.reply_sticker(sticker=output)
         await u.message.reply_text("✅ Listo rey 😎")
-
     except Exception as e:
-        logging.exception("sticker error")
+        logging.exception("sticker foto error")
         await u.message.reply_text(f"❌ Error: {e}")
 
 # --- MEDIA ---
