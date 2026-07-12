@@ -15,8 +15,13 @@ logging.basicConfig(level=logging.INFO)
 
 T = os.getenv("Token")
 os.makedirs("/tmp/downloads", exist_ok=True)
-memes_vistos = set()
-CATEGORIAS = ["meme", "memes", "dankmemes", "wholesomememes", "programmingmemes", "dogmemes", "catmemes"]
+CATEGORIAS = {
+    "random":   ["memes", "dankmemes", "SpanishMemes"],
+    "anime":    ["AnimeMemes", "Animemes"],
+    "gacha":    ["gachamemes"],
+    "otaku":    ["Animemes", "manga"],
+    "shitpost": ["shitposting", "dankmemes"],
+}
 DB_FILE = "/tmp/economia.json"
 
 # --- BASE DE DATOS SIMPLE ---
@@ -97,40 +102,46 @@ async def ship(u,c): await u.message.reply_text(f"💘 Compatibilidad: {random.r
 async def cun(u,c): await u.message.reply_text(f"💘 Tu % de cun conmigo: {random.randint(1,100)}%")
 async def preniar(u,c): await u.message.reply_text(f"Hoy preño a: @{random.choice(['usuario1','usuario2','tu crush'])}")
 async def sorteo(u,c): await u.message.reply_text(f"🎉 Ganador del sorteo: @{random.choice(['user1','user2'])}")
-async def enviar_meme(c, categoria, chat_id):
-    msg = await c.bot.send_message(chat_id=chat_id, text=f"Buscando meme de r/{categoria} 😂 ⏳")
-
-    for _ in range(10):
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://meme-api.com/gimme/{categoria}") as resp:
-                data = await resp.json()
-                meme_id = data.get("postLink")
-                if meme_id and meme_id not in memes_vistos:
-                    memes_vistos.add(meme_id)
-                    if len(memes_vistos) > 200:
-                        memes_vistos.pop()
-                    keyboard = [[InlineKeyboardButton("➡️ Siguiente meme", callback_data=f"nextmeme_{categoria}")]]
-                    await msg.delete()
-                    await c.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=data["url"],
-                        caption=f"🤣 {data['title']}\n👍 {data['ups']} upvotes | r/{data['subreddit']}",
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                    )
-                    return
-
-    await msg.edit_text("❌ Me quedé sin memes nuevos. Prueba: /meme programación")
-
 async def meme(u,c):
-    categoria = c.args[0] if c.args else random.choice(CATEGORIAS)
-    await enviar_meme(c, categoria, u.message.chat_id)
+    cat = c.args[0].lower() if c.args else "random"
+    if cat not in CATEGORIAS: cat = "random"
+    sub = random.choice(CATEGORIAS[cat])
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://meme-api.com/gimme/{sub}", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                res = await resp.json()
+        keyboard = [[InlineKeyboardButton("➡️ Siguiente", callback_data=f"meme_{cat}")]]
+        await u.message.reply_photo(
+            photo=res["url"],
+            caption=f"😂 **{res.get('title','')}**\n`r/{res.get('subreddit',sub)}` | Categoría: {cat}",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        await u.message.reply_text(f"❌ Fallo al cargar meme. Intenta de nuevo 😅\n{e}")
 
 async def next_meme_handler(u, c):
     query = u.callback_query
     await query.answer()
-    categoria = query.data.split("_")[1]
-    await query.message.delete()
-    await enviar_meme(c, categoria, query.message.chat_id)
+    cat = query.data.split("_")[1]
+    if cat not in CATEGORIAS: cat = "random"
+    sub = random.choice(CATEGORIAS[cat])
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://meme-api.com/gimme/{sub}", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                res = await resp.json()
+        keyboard = [[InlineKeyboardButton("➡️ Siguiente", callback_data=f"meme_{cat}")]]
+        from telegram import InputMediaPhoto
+        await query.edit_message_media(
+            media=InputMediaPhoto(
+                media=res["url"],
+                caption=f"😂 **{res.get('title','')}**\n`r/{res.get('subreddit',sub)}` | Categoría: {cat}",
+                parse_mode='Markdown'
+            ),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        await query.edit_message_text(f"❌ Error: {e}")
 
 async def gato(u,c):
     msg = await u.message.reply_text("Buscando michi 🐱 ⏳")
@@ -508,7 +519,7 @@ CMDS = {
 for cmd, fn in CMDS.items():
     app.add_handler(C(cmd, fn))
 
-app.add_handler(CallbackQueryHandler(next_meme_handler, pattern="^nextmeme_"))
+app.add_handler(CallbackQueryHandler(next_meme_handler, pattern="^meme_"))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(dl_|vdl_)"))
 
 print(f"Bot DANTE iniciado con {len(CMDS)} comandos")
