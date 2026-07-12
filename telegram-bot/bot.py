@@ -269,7 +269,7 @@ async def button_handler(u,c):
         ext = 'mp3'
     else:
         ydl_opts = {
-            'format': 'best[height<=480]',
+            'format': 'bestvideo[height<=480][vcodec^=avc]+bestaudio/best[height<=480]',
             'outtmpl': '/tmp/file.%(ext)s',
             'merge_output_format': 'mp4',
             'quiet': True,
@@ -304,14 +304,27 @@ async def button_handler(u,c):
 
 async def video(u,c):
     if not c.args:
-        await u.message.reply_text("Usa: /video link o /video nombre del video")
+        await u.message.reply_text("Usa: `/video link` o `/video nombre del video`", parse_mode='Markdown')
         return
 
     query = " ".join(c.args)
     msg = await u.message.reply_text(f"Buscando opciones de: {query} ⏳")
 
-    ydl_opts = {'default_search': 'ytsearch5', 'noplaylist': True, 'quiet': True}
+    # Link directo de YouTube o Shorts
+    if any(x in query for x in ("youtube.com", "youtu.be", "shorts")):
+        try:
+            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                info = ydl.extract_info(query, download=False)
+                title = info.get('title')
+                video_id = info.get('id')
+            keyboard = [[InlineKeyboardButton(f"📹 Descargar: {title[:40]}", callback_data=f"vdl_{video_id}")]]
+            await msg.edit_text(f"Video encontrado: *{title}*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception as e:
+            await msg.edit_text(f"❌ Error con el link: {e}")
+        return
 
+    # Búsqueda por nombre
+    ydl_opts = {'default_search': 'ytsearch5', 'noplaylist': True, 'quiet': True}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(query, download=False)
@@ -319,12 +332,11 @@ async def video(u,c):
 
         keyboard = []
         for i, v in enumerate(videos[:5]):
-            title = v['title'][:40]
+            title = v['title']
             duration = v.get('duration', 0)
             mins, secs = divmod(duration, 60)
-            size_mb = round(v.get('filesize_approx', 0) / 1024 / 1024)
-            label = f"{i+1}. {title} [{mins}:{secs:02d}]" + (f" ~{size_mb}MB" if size_mb else "")
-            keyboard.append([InlineKeyboardButton(label, callback_data=f"vdl_{v['id']}")])
+            tag = " [SHORT]" if duration <= 60 else ""
+            keyboard.append([InlineKeyboardButton(f"{i+1}. {title[:35]}{tag} [{mins}:{secs:02d}]", callback_data=f"vdl_{v['id']}")])
 
         await msg.edit_text(f"Elige un video para: *{query}*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
