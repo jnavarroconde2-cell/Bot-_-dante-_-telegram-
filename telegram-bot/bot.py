@@ -34,23 +34,20 @@ def get_user(uid):
 async def start(u,c):
     caption = (
         "👋 **Hola Soy DANTE** 😈\n\n"
-        "**Comandos Disponibles:**\n"
-        "`/playaudio nombre` → Buscar música MP3\n"
-        "`/video nombre/link` → Buscar/Descargar video\n"
-        "`/meme` → Meme random\n"
-        "`/gato` → Foto de gato random\n"
-        "`/perro` → Foto de perro random\n\n"
+        "**COMANDOS:**\n"
+        "**General:** `/start /help /ping /calcular /frase /chiste /bola8 /dado /coin /ppt /sorteo`\n"
+        "**Diversion:** `/ship /cun /preniar /sticker /meme /gato /perro`\n"
+        "**Media:** `/playaudio /video`\n"
+        "**Economia:** `/balance /trabajar /diario /robar /tiendaeco /gacha /inventario`\n"
+        "**Admin:** `/kick /ban /warn /link`\n"
+        "**Shop:** `/premium /tienda /soporte`\n\n"
         "💙💗 **Team Rem y Ram**"
     )
-    foto_url = "https://imgur.com/a/pkG2AUY"
-    try:
-        await u.message.reply_photo(photo=foto_url, caption=caption, parse_mode='Markdown')
-    except Exception:
-        await u.message.reply_text(caption, parse_mode='Markdown')
+    await u.message.reply_text(caption, parse_mode='Markdown')
 
 async def help(u,c): await start(u,c)
 
-async def ping(u,c): await u.message.reply_text("Pong! Bot vivo ✅")
+async def ping(u,c): await u.message.reply_text("🏓 Pong! Bot vivo ✅")
 async def dado(u,c): await u.message.reply_text(f"🎲 Salió: {random.randint(1,6)}")
 async def coin(u,c): await u.message.reply_text(f"🪙 Salió: {random.choice(['Cara','Cruz'])}")
 async def chiste(u,c): await u.message.reply_text(random.choice(["¿Qué le dice un techo a otro? Techo de menos","¿Por qué los pájaros no usan twitter? Porque ya tienen facebook"]))
@@ -74,7 +71,7 @@ async def ppt(u,c):
 
 # --- DIVERSIÓN ---
 async def ship(u,c): await u.message.reply_text(f"💘 Compatibilidad: {random.randint(1,100)}%")
-async def cun(u,c): await u.message.reply_text(f"Tu % de cun: {random.randint(1,100)}%")
+async def cun(u,c): await u.message.reply_text(f"💘 Tu % de cun conmigo: {random.randint(1,100)}%")
 async def preniar(u,c): await u.message.reply_text(f"Hoy preño a: @{random.choice(['usuario1','usuario2','tu crush'])}")
 async def sorteo(u,c): await u.message.reply_text(f"🎉 Ganador del sorteo: @{random.choice(['user1','user2'])}")
 async def enviar_meme(c, categoria, chat_id):
