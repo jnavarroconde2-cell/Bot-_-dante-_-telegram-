@@ -2,6 +2,7 @@ import os
 import random
 import json
 import logging
+import time
 import aiohttp
 from io import BytesIO
 from telegram.ext import ApplicationBuilder as A, CommandHandler as C, CallbackQueryHandler, filters as F
@@ -27,8 +28,30 @@ def guardar_db(data):
 db = cargar_db()
 
 def get_user(uid):
-    if str(uid) not in db: db[str(uid)] = {"balance": 100, "inventario": []}
-    return db[str(uid)]
+    uid = str(uid)
+    if uid not in db:
+        db[uid] = {"balance": 100, "tickets": 0, "inventario": [], "waifus": [],
+                   "racha_daily": 0, "ultimo_daily": 0, "ultimo_daily_coins": 0}
+        guardar_db(db)
+    user = db[uid]
+    # migrar campos viejos
+    for k, v in [("tickets", 0), ("waifus", []), ("racha_daily", 0),
+                 ("ultimo_daily", 0), ("ultimo_daily_coins", 0)]:
+        user.setdefault(k, v)
+    return user
+
+# --- GACHA POOL ---
+WAIFUS = {
+    "R":    ["Rin - Cat Fantasy","Miyu - Cat Fantasy","Shiro - Cat Fantasy",
+             "Nobara Kugisaki - JJK","Maki Zenin - JJK","Miwa - JJK"],
+    "SR":   ["Aisha - Cat Fantasy","Yukari - Cat Fantasy","Luna - Cat Fantasy",
+             "Megumi Fushiguro - JJK","Kento Nanami - JJK","Toge Inumaki - JJK"],
+    "SSR":  ["Lilith - Cat Fantasy","Meia - Cat Fantasy","Nyaru - Cat Fantasy",
+             "Satoru Gojo - JJK","Yuta Okkotsu - JJK","Suguru Geto - JJK"],
+    "SSSR": ["Mashiro - Cat Fantasy","Selena - Cat Fantasy",
+             "Ryomen Sukuna - JJK","Toji Fushiguro - JJK"],
+}
+EMOJIS_R = {"R": "⚪", "SR": "🔵", "SSR": "🟡", "SSSR": "🌈"}
 
 # --- COMANDOS BÁSICOS ---
 async def start(u,c):
@@ -358,8 +381,33 @@ async def trabajar(u,c):
 
 async def diario(u,c):
     user = get_user(u.effective_user.id)
-    user['balance'] += 100; guardar_db(db)
-    await u.message.reply_text("Reclamaste tu recompensa diaria: 100 monedas!")
+    ahora = time.time()
+    LIMITE = 1_000_000
+    if ahora - user.get("ultimo_daily", 0) < 86400:
+        resto = 86400 - (ahora - user["ultimo_daily"])
+        h, m = int(resto // 3600), int((resto % 3600) // 60)
+        await u.message.reply_text(f"⏰ Ya reclamaste hoy.\nVuelve en {h}h {m}m")
+        return
+    if user["racha_daily"] == 0:
+        coins = 5000
+        user["racha_daily"] = 1
+    else:
+        coins = min(user.get("ultimo_daily_coins", 5000) * 2, LIMITE)
+        user["racha_daily"] += 1
+    user["balance"] += coins
+    user["tickets"] += 1
+    user["ultimo_daily"] = ahora
+    user["ultimo_daily_coins"] = coins
+    guardar_db(db)
+    extra = "\n🔥 **TOPE MÁXIMO** 🔥" if coins >= LIMITE else f"\nMañana: ${min(coins*2, LIMITE):,}"
+    await u.message.reply_text(
+        f"🎁 **RECOMPENSA DIARIA DÍA {user['racha_daily']}**{extra}\n\n"
+        f"💰 Coins: ${coins:,}\n🎟️ Tickets: +1\n\n"
+        f"Balance: ${user['balance']:,}\nTickets: {user['tickets']}",
+        parse_mode='Markdown'
+    )
+
+async def daily(u,c): await diario(u,c)
 
 async def robar(u,c):
     user = get_user(u.effective_user.id)
@@ -368,10 +416,37 @@ async def robar(u,c):
     await u.message.reply_text(f"Robaste {robo} monedas! 😈")
 
 async def tiendaeco(u,c): await u.message.reply_text("Tienda: 1. Espada - 500\n2. Escudo - 300")
-async def gacha(u,c): await u.message.reply_text(f"Te tocó: {random.choice(['Común','Raro','Épico','Legendario'])}")
+async def gacha(u,c):
+    user = get_user(u.effective_user.id)
+    if user.get("tickets", 0) < 1:
+        await u.message.reply_text("❌ Te faltan tickets.\nUsa `/daily` para reclamar 1 ticket gratis", parse_mode='Markdown')
+        return
+    user["tickets"] -= 1
+    suerte = random.uniform(0, 100)
+    rareza = "SSSR" if suerte <= 0.5 else "SSR" if suerte <= 10.5 else "SR" if suerte <= 45.5 else "R"
+    waifu = random.choice(WAIFUS[rareza])
+    user["waifus"].append(f"{rareza} - {waifu}")
+    guardar_db(db)
+    caption = (
+        f"{EMOJIS_R[rareza]} **TIRASTE EL GACHA** {EMOJIS_R[rareza]}\n\n"
+        f"**Rareza:** {rareza}\n**Waifu:** {waifu}\n\n"
+        f"🎟️ Tickets: {user['tickets']}\n💍 Waifus totales: {len(user['waifus'])}"
+    )
+    img_path = f"telegram-bot/waifus/{waifu}.jpg"
+    if os.path.exists(img_path):
+        await u.message.reply_photo(photo=open(img_path, 'rb'), caption=caption, parse_mode='Markdown')
+    else:
+        await u.message.reply_text(caption, parse_mode='Markdown')
+
+async def tickets(u,c):
+    user = get_user(u.effective_user.id)
+    await u.message.reply_text(f"🎟️ Tienes: {user.get('tickets', 0)} tickets")
+
 async def inventario(u,c):
     user = get_user(u.effective_user.id)
-    await u.message.reply_text(f"Inventario: {user['inventario']}")
+    waifus = user.get("waifus", [])
+    texto = "🎒 **TU COLECCIÓN**\n\n" + ("\n".join(waifus) if waifus else "No tienes waifus aún. Usa /gacha")
+    await u.message.reply_text(texto, parse_mode='Markdown')
 
 # --- ADMIN ---
 async def kick(u,c): await u.message.reply_text("Kickeado... necesitas darme admin")
@@ -395,8 +470,8 @@ CMDS = {
     "sorteo": sorteo, "meme": meme, "gato": gato, "perro": perro,
     "stickerpreniar": stickerpreniar, "sticker": sticker,
     "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3,
-    "balance": balance, "trabajar": trabajar, "diario": diario, "robar": robar,
-    "tiendaeco": tiendaeco, "gacha": gacha, "inventario": inventario,
+    "balance": balance, "trabajar": trabajar, "diario": diario, "daily": daily, "robar": robar,
+    "tiendaeco": tiendaeco, "gacha": gacha, "tickets": tickets, "inventario": inventario,
     "kick": kick, "ban": ban, "warn": warn, "link": link,
     "premium": premium, "tienda": tienda, "soporte": soporte, "imagine": imagine,
 }
