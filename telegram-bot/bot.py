@@ -343,6 +343,29 @@ async def video(u,c):
 
 async def ytmp3(u,c): await playaudio(u,c)
 
+async def tt(u,c):
+    if not c.args:
+        await u.message.reply_text("Uso: `/tt https://www.tiktok.com/...`", parse_mode='Markdown'); return
+    url = c.args[0]
+    if "tiktok.com" not in url:
+        await u.message.reply_text("Manda un link de TikTok válido"); return
+    await u.message.reply_text("⏳ Descargando video sin marca de agua...")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://api.tikwm.com/video/?url={url}") as r:
+                res = await r.json()
+        if res.get("code") != 0:
+            await u.message.reply_text("❌ No pude descargar ese video"); return
+        data = res["data"]
+        await u.effective_chat.send_video(
+            video=data["play"],
+            caption=f"🎵 **{data['title']}**\n👤 @{data['author']['nickname']}\n\nDescargado por DANTE Bot",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logging.exception("tt error")
+        await u.message.reply_text(f"❌ Error: {e}")
+
 # --- ECONOMÍA ---
 async def balance(u,c):
     user = get_user(u.effective_user.id)
@@ -474,7 +497,7 @@ CMDS = {
     "calcular": calcular, "ppt": ppt, "ship": ship, "cun": cun, "preniar": preniar,
     "sorteo": sorteo, "meme": meme, "gato": gato, "perro": perro,
     "stickerpreniar": stickerpreniar, "sticker": sticker,
-    "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3,
+    "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3, "tt": tt,
     "balance": balance, "trabajar": trabajar, "diario": diario, "daily": daily, "robar": robar,
     "tiendaeco": tiendaeco, "gacha": gacha, "tickets": tickets, "inventario": inventario,
     "kick": kick, "ban": ban, "warn": warn, "link": link,
