@@ -1,8 +1,6 @@
 import os
 import yt_dlp
-import aiohttp
 import random
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 
@@ -12,7 +10,7 @@ T = os.getenv("TOKEN")
 memes_vistos = set()
 CATEGORIAS = ["meme", "memes", "dankmemes", "wholesomememes", "programmingmemes", "dogmemes", "catmemes"]
 
-# ===== /START Y /HELP CON TEXTO - ARREGLADO =====
+# ===== /START Y /HELP CON TEXTO =====
 def start(update: Update, context: CallbackContext):
     caption = (
         "👋 **Hola Soy DANTE** 😈\n\n"
