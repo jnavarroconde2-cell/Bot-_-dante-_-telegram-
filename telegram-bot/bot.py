@@ -351,11 +351,12 @@ async def tt(u,c):
         await u.message.reply_text("Manda un link de TikTok válido"); return
     await u.message.reply_text("⏳ Descargando video sin marca de agua...")
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://api.tikwm.com/video/?url={url}") as r:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(f"https://www.tikwm.com/api/?url={url}", timeout=aiohttp.ClientTimeout(total=15)) as r:
                 res = await r.json()
         if res.get("code") != 0:
-            await u.message.reply_text("❌ No pude descargar ese video"); return
+            await u.message.reply_text("❌ No pude descargar ese video. ¿Es privado?"); return
         data = res["data"]
         await u.effective_chat.send_video(
             video=data["play"],
