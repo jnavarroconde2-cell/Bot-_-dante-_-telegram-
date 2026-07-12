@@ -31,15 +31,24 @@ def get_user(uid):
     return db[str(uid)]
 
 # --- COMANDOS BÁSICOS ---
-async def start(u,c): await u.message.reply_text("Hola Soy DANTE 👑 \nUsa /help para ver los comandos")
-async def help(u,c):
-    await u.message.reply_text("""**DANTE BOT - COMANDOS**
-**General**: /start /help /ping /calcular /frase /chiste /bola8 /dado /coin /ppt /sorteo
-**Diversion**: /ship /cun /preniar /stickerpreniar /sticker /meme /picante /gato /perro /imagine
-**Media**: /playaudio /video /ytmp3 /yts
-**Economia**: /balance /trabajar /diario /robar /tiendaeco /gacha /inventario
-**Admin**: /kick /ban /warn /link
-**Shop**: /premium /tienda /soporte""", parse_mode="Markdown")
+async def start(u,c):
+    caption = (
+        "👋 **Hola Soy DANTE** 😈\n\n"
+        "**Comandos Disponibles:**\n"
+        "`/playaudio nombre` → Buscar música MP3\n"
+        "`/video nombre/link` → Buscar/Descargar video\n"
+        "`/meme` → Meme random\n"
+        "`/gato` → Foto de gato random\n"
+        "`/perro` → Foto de perro random\n\n"
+        "💙💗 **Team Rem y Ram**"
+    )
+    foto_url = "https://imgur.com/a/pkG2AUY"
+    try:
+        await u.message.reply_photo(photo=foto_url, caption=caption, parse_mode='Markdown')
+    except Exception:
+        await u.message.reply_text(caption, parse_mode='Markdown')
+
+async def help(u,c): await start(u,c)
 
 async def ping(u,c): await u.message.reply_text("Pong! Bot vivo ✅")
 async def dado(u,c): await u.message.reply_text(f"🎲 Salió: {random.randint(1,6)}")
