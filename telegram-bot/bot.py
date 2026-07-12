@@ -7,7 +7,7 @@ import subprocess
 import aiohttp
 from io import BytesIO
 from telegram.ext import ApplicationBuilder as A, CommandHandler as C, CallbackQueryHandler, filters as F
-from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
 from PIL import Image, ImageDraw, ImageFont
 import yt_dlp
 
@@ -424,7 +424,37 @@ async def inventario(u,c):
     await u.message.reply_text(texto, parse_mode='Markdown')
 
 # --- ADMIN ---
-async def kick(u,c): await u.message.reply_text("Kickeado... necesitas darme admin")
+async def kick(u,c):
+    chat = u.effective_chat
+    user = u.effective_user
+    msg = u.message
+    try:
+        member = await chat.get_member(user.id)
+        if member.status not in [ChatMember.ADMINISTRATOR, ChatMember.OWNER]:
+            await msg.reply_text("Solo los admins pueden usar /kick 😒"); return
+    except:
+        await msg.reply_text("No pude verificar si eres admin"); return
+    if not msg.reply_to_message and not c.args:
+        await msg.reply_text("Responde al mensaje del wey o pon /kick @usuario"); return
+    if msg.reply_to_message:
+        target = msg.reply_to_message.from_user
+    else:
+        try:
+            cm = await c.bot.get_chat_member(chat.id, c.args[0])
+            target = cm.user
+        except:
+            await msg.reply_text("No encontré a ese usuario"); return
+    target_member = await chat.get_member(target.id)
+    if target_member.status in [ChatMember.ADMINISTRATOR, ChatMember.OWNER]:
+        await msg.reply_text("No puedo kickear a un admin bro"); return
+    if target.id == c.bot.id:
+        await msg.reply_text("No me puedo kickear solo 😭"); return
+    try:
+        await chat.ban_member(target.id)
+        await chat.unban_member(target.id)
+        await msg.reply_text(f"👢 {target.first_name} fue eliminado del grupo")
+    except Exception as e:
+        await msg.reply_text(f"❌ Error: {e}")
 async def ban(u,c): await u.message.reply_text("Baneado... necesitas darme admin")
 async def warn(u,c): await u.message.reply_text("Advertencia enviada ⚠️")
 async def link(u,c): await u.message.reply_text("Link del grupo: pide a un admin")
