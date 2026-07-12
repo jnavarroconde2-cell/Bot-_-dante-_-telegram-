@@ -153,107 +153,56 @@ async def stickerpreniar(u,c): await u.message.reply_text("Waifu embarazada stic
 # --- STICKER ---
 async def sticker(u,c):
     if not u.message.reply_to_message:
-        return await u.message.reply_text(
-            "❌ Responde a una foto, gif o video con `/sticker`\n"
-            "Foto: acepta también `redondo`, texto y emojis como args",
-            parse_mode="Markdown"
-        )
+        await u.message.reply_text("Responde a una foto, video o gif con /sticker bro")
+        return
 
     msg = u.message.reply_to_message
-    args = c.args
+    await u.message.reply_text("Procesando... espera 👀")
 
-    # --- VIDEO / GIF → WebM animado ---
-    if msg.video or msg.animation or (msg.document and msg.document.mime_type and msg.document.mime_type.startswith("video/")):
-        await u.message.reply_text("🎬 Convirtiendo a sticker animado... espera ~10 seg 👀")
-        try:
-            if msg.video:
-                file = await msg.video.get_file()
-            elif msg.animation:
-                file = await msg.animation.get_file()
-            else:
-                file = await msg.document.get_file()
+    try:
+        # FOTO → WebP estático
+        if msg.photo:
+            file = await c.bot.get_file(msg.photo[-1].file_id)
+            await file.download_to_drive("/tmp/sticker_in.jpg")
+            subprocess.run([
+                "ffmpeg", "-y", "-i", "/tmp/sticker_in.jpg",
+                "-vf", "scale=512:512:force_original_aspect_ratio=decrease",
+                "-fs", "500KB",
+                "/tmp/sticker_out.webp"
+            ], capture_output=True)
+            with open("/tmp/sticker_out.webp", "rb") as f:
+                await u.message.reply_sticker(sticker=f)
+            await u.message.reply_text("✅ Sticker estático listo 😎")
+
+        # VIDEO / GIF / ANIMACIÓN → WebM animado
+        elif msg.video or msg.animation or msg.document:
+            file_id = msg.video.file_id if msg.video else msg.animation.file_id if msg.animation else msg.document.file_id
+            file = await c.bot.get_file(file_id)
             await file.download_to_drive("/tmp/sticker_in.mp4")
-            cmd = [
+            await u.message.reply_text("🎬 Convirtiendo a sticker animado... espera ~10 seg 👀")
+            result = subprocess.run([
                 "ffmpeg", "-y", "-i", "/tmp/sticker_in.mp4",
-                "-vcodec", "libvpx-vp9", "-fs", "256000",
+                "-vcodec", "libvpx-vp9", "-fs", "500KB",
                 "-an", "-ss", "0", "-t", "3",
                 "-vf", "scale=512:512:force_original_aspect_ratio=decrease,fps=15",
                 "/tmp/sticker_out.webm"
-            ]
-            result = subprocess.run(cmd, capture_output=True)
+            ], capture_output=True)
             if result.returncode != 0:
                 raise RuntimeError(result.stderr.decode()[-300:])
             with open("/tmp/sticker_out.webm", "rb") as f:
                 await u.message.reply_sticker(sticker=f)
             await u.message.reply_text("✅ Sticker animado listo 😎")
-        except Exception as e:
-            logging.exception("sticker video error")
-            await u.message.reply_text(f"❌ Error: {e}")
-        finally:
-            for p in ("/tmp/sticker_in.mp4", "/tmp/sticker_out.webm"):
-                if os.path.exists(p): os.remove(p)
-        return
 
-    # --- FOTO / IMAGEN → WebP estático ---
-    texto = ""
-    redondo = False
-    emoji = ""
-    for arg in args:
-        if arg.lower() == "redondo":
-            redondo = True
-        elif any(char in arg for char in "😀😂😎❤️😭🥵👑🔥💀✨😃"):
-            emoji = arg
         else:
-            texto += arg + " "
-    texto = texto.strip()
+            await u.message.reply_text("Eso no es foto ni video bro. Responde a una imagen o video")
 
-    if msg.photo: file = await msg.photo[-1].get_file()
-    elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith("image/"):
-        file = await msg.document.get_file()
-    else:
-        return await u.message.reply_text("❌ Solo foto, gif o video < 3s")
-
-    await u.message.reply_text("⏳ Haciendo sticker...")
-    file_bytes = BytesIO()
-    await file.download_to_memory(out=file_bytes)
-    file_bytes.seek(0)
-
-    try:
-        img = Image.open(file_bytes).convert("RGBA")
-        img.thumbnail((500, 500), Image.LANCZOS)
-        borde = Image.new("RGBA", (img.width + 12, img.height + 12), (255, 255, 255, 255))
-        borde.paste(img, (6, 6), img)
-        img = borde
-        canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
-        if redondo:
-            mask = Image.new("L", (512, 512), 0)
-            draw_mask = ImageDraw.Draw(mask)
-            draw_mask.ellipse((0, 0, 512, 512), fill=255)
-            canvas.paste(img, ((512 - img.width) // 2, (512 - img.height) // 2), img)
-            canvas.putalpha(mask)
-        else:
-            canvas.paste(img, ((512 - img.width) // 2, (512 - img.height) // 2), img)
-        if texto or emoji:
-            draw = ImageDraw.Draw(canvas)
-            try:
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 42)
-            except Exception:
-                font = ImageFont.load_default()
-            final_text = f"{texto} {emoji}".strip()
-            text_w, text_h = draw.textbbox((0, 0), final_text, font=font)[2:]
-            x = 256 - text_w // 2
-            y = 512 - text_h - 10
-            for adj in [-2, -1, 0, 1, 2]:
-                draw.text((x + adj, y + adj), final_text, font=font, fill="black")
-            draw.text((x, y), final_text, font=font, fill="white")
-        output = BytesIO()
-        canvas.save(output, format="WEBP")
-        output.seek(0)
-        await u.message.reply_sticker(sticker=output)
-        await u.message.reply_text("✅ Listo rey 😎")
     except Exception as e:
-        logging.exception("sticker foto error")
+        logging.exception("sticker error")
         await u.message.reply_text(f"❌ Error: {e}")
+    finally:
+        for p in ("/tmp/sticker_in.jpg", "/tmp/sticker_in.mp4",
+                  "/tmp/sticker_out.webp", "/tmp/sticker_out.webm"):
+            if os.path.exists(p): os.remove(p)
 
 # --- MEDIA ---
 async def yts(u,c):
