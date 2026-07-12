@@ -32,20 +32,19 @@ def get_user(uid):
 
 # --- COMANDOS BÁSICOS ---
 async def start(u,c):
-    caption = (
-        "👋 **Hola Soy DANTE** 😈\n\n"
-        "**COMANDOS:**\n"
-        "**General:** `/start /help /ping /calcular /frase /chiste /bola8 /dado /coin /ppt /sorteo`\n"
-        "**Diversion:** `/ship /cun /preniar /sticker /meme /gato /perro`\n"
-        "**Media:** `/playaudio /video`\n"
-        "**Economia:** `/balance /trabajar /diario /robar /tiendaeco /gacha /inventario`\n"
-        "**Admin:** `/kick /ban /warn /link`\n"
-        "**Shop:** `/premium /tienda /soporte`\n\n"
-        "💙💗 **Team Rem y Ram**"
-    )
-    await u.message.reply_text(caption, parse_mode='Markdown')
+    await u.message.reply_text("Hola Soy DANTE 👑\nUsa /help para ver los comandos")
 
-async def help(u,c): await start(u,c)
+async def help(u,c):
+    texto = (
+        "DANTE BOT - COMANDOS\n"
+        "General: /start /help /ping /calcular /frase /chiste /8ball /dado /coin /ppt /sorteo\n"
+        "Diversion: /ship /cun /preniar /stickerpreniar /sticker /meme /picante /gato /perro /imagine\n"
+        "Media: /playaudio /video /ytmp3 /yts\n"
+        "Economia: /balance /trabajar /diario /daily /robar /tiendaeco /tienda /comprar /gacha /tickets /inventario\n"
+        "Admin: /kick /ban /warn /link\n"
+        "Shop: /premium /tienda /soporte"
+    )
+    await u.message.reply_text(texto)
 
 async def ping(u,c): await u.message.reply_text("🏓 Pong! Bot vivo ✅")
 async def dado(u,c): await u.message.reply_text(f"🎲 Salió: {random.randint(1,6)}")
