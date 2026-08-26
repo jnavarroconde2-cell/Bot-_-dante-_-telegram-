@@ -4,6 +4,7 @@ import json
 import logging
 import time
 import subprocess
+import re
 import aiohttp
 from io import BytesIO
 from telegram.ext import ApplicationBuilder as A, CommandHandler as C, CallbackQueryHandler, filters as F
@@ -356,27 +357,90 @@ async def ytmp3(u,c): await playaudio(u,c)
 
 async def tt(u,c):
     if not c.args:
-        await u.message.reply_text("Uso: `/tt https://www.tiktok.com/...`", parse_mode='Markdown'); return
-    url = c.args[0]
-    if "tiktok.com" not in url:
-        await u.message.reply_text("Manda un link de TikTok válido"); return
-    await u.message.reply_text("⏳ Descargando video sin marca de agua...")
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(f"https://www.tikwm.com/api/?url={url}", timeout=aiohttp.ClientTimeout(total=15)) as r:
-                res = await r.json()
-        if res.get("code") != 0:
-            await u.message.reply_text("❌ No pude descargar ese video. ¿Es privado?"); return
-        data = res["data"]
-        await u.effective_chat.send_video(
-            video=data["play"],
-            caption=f"🎵 **{data['title']}**\n👤 @{data['author']['nickname']}\n\nDescargado por DANTE Bot",
-            parse_mode='Markdown'
+        await u.message.reply_text(
+            "「✿」 Uso: `/tt https://www.tiktok.com/...`",
+            parse_mode="Markdown"
         )
+        return
+
+    url = c.args[0].strip()
+    if not re.search(r"(?:^|//)(?:www\.)?(?:vm\.)?tiktok\.com(?:/|$)", url, re.IGNORECASE):
+        await u.message.reply_text("「✿」 Manda un link de TikTok válido rata")
+        return
+
+    msg = await u.message.reply_text("「✿」 ⏳ Bajando video sin marca de agua...")
+    data = await get_tiktok_video(url)
+    if not data:
+        await u.message.reply_text(
+            "「✿」 No pude descargar ese video. Puede ser privado o el link está mal"
+        )
+        return
+
+    try:
+        await u.effective_chat.send_video(
+            video=data["video"],
+            caption=(
+                f"「✿」 **{data['title']}**\n"
+                f"👤 @{data['author']}\n\n"
+                "Descargado por DANTE Bot"
+            ),
+            parse_mode="Markdown"
+        )
+        await msg.delete()
     except Exception as e:
         logging.exception("tt error")
-        await u.message.reply_text(f"❌ Error: {e}")
+        await u.message.reply_text(
+            "「✿」 El video pesa mucho o Telegram no pudo enviarlo. "
+            f"Toma el link directo:\n{data['video']}"
+        )
+
+async def get_tiktok_video(url):
+    apis = [
+        ("https://api.tikwm.com/video/", "tikwm"),
+        ("https://www.tikwm.com/api/", "tikwm"),
+        ("https://api.tiktokio.com/video", "tiktokio"),
+    ]
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    async with aiohttp.ClientSession(headers=headers) as session:
+        for api_url, provider in apis:
+            try:
+                async with session.get(
+                    api_url,
+                    params={"url": url},
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status != 200:
+                        continue
+                    res = await response.json(content_type=None)
+
+                if provider == "tikwm" and res.get("data", {}).get("play"):
+                    item = res["data"]
+                    author = item.get("author", {})
+                    if isinstance(author, dict):
+                        author = author.get("nickname", "Desconocido")
+                    return {
+                        "video": item["play"],
+                        "title": item.get("title", "Video TikTok"),
+                        "author": author or "Desconocido",
+                    }
+
+                if (
+                    provider == "tiktokio"
+                    and res.get("status") == "success"
+                    and res.get("data", {}).get("video")
+                ):
+                    item = res["data"]
+                    return {
+                        "video": item["video"],
+                        "title": item.get("title", "Video TikTok"),
+                        "author": item.get("author", "Desconocido"),
+                    }
+            except Exception:
+                logging.exception("TikTok API falló: %s", api_url)
+                continue
+
+    return None
 
 # --- ECONOMÍA ---
 async def balance(u,c):
