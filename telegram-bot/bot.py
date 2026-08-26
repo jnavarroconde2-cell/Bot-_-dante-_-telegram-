@@ -5,9 +5,24 @@ import logging
 import time
 import subprocess
 import re
+import asyncio
 import aiohttp
+import sympy
 from io import BytesIO
-from telegram.ext import ApplicationBuilder as A, CommandHandler as C, CallbackQueryHandler, filters as F
+from sympy.parsing.sympy_parser import (
+    parse_expr,
+    standard_transformations,
+    implicit_multiplication_application,
+    convert_xor,
+)
+from openai import OpenAI
+from telegram.ext import (
+    ApplicationBuilder as A,
+    CommandHandler as C,
+    CallbackQueryHandler,
+    MessageHandler as M,
+    filters as F,
+)
 from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
 from PIL import Image, ImageDraw, ImageFont
 import yt_dlp
@@ -15,6 +30,12 @@ import yt_dlp
 logging.basicConfig(level=logging.INFO)
 
 T = os.getenv("Token")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+MATH_TRANSFORMATIONS = standard_transformations + (
+    implicit_multiplication_application,
+    convert_xor,
+)
 os.makedirs("/tmp/downloads", exist_ok=True)
 CATEGORIAS = {
     "random":   ["memes", "dankmemes", "SpanishMemes"],
@@ -38,12 +59,13 @@ def get_user(uid):
     uid = str(uid)
     if uid not in db:
         db[uid] = {"balance": 100, "tickets": 0, "inventario": [], "waifus": [],
-                   "racha_daily": 0, "ultimo_daily": 0, "ultimo_daily_coins": 0}
+                   "racha_daily": 0, "ultimo_daily": 0, "ultimo_daily_coins": 0,
+                   "vip": False}
         guardar_db(db)
     user = db[uid]
     # migrar campos viejos
     for k, v in [("tickets", 0), ("waifus", []), ("racha_daily", 0),
-                 ("ultimo_daily", 0), ("ultimo_daily_coins", 0)]:
+                 ("ultimo_daily", 0), ("ultimo_daily_coins", 0), ("vip", False)]:
         user.setdefault(k, v)
     return user
 
@@ -67,7 +89,7 @@ async def start(u,c):
 async def help(u,c):
     texto = (
         "DANTE BOT - COMANDOS\n"
-        "General: /start /help /ping /calcular /frase /chiste /8ball /dado /coin /ppt /sorteo\n"
+        "General: /start /help /ping /calcular /resolver /explicar /examen /frase /chiste /8ball /dado /coin /ppt /sorteo\n"
         "Diversion: /ship /cun /preniar /stickerpreniar /sticker /meme /picante /gato /perro /imagine\n"
         "Media: /playaudio /video /ytmp3 /yts\n"
         "Economia: /balance /trabajar /diario /daily /robar /tiendaeco /tienda /comprar /gacha /tickets /inventario\n"
@@ -90,6 +112,104 @@ async def calcular(u,c):
         return await u.message.reply_text("Usa: /calcular 2+2  (solo números y operadores básicos)")
     try: await u.message.reply_text(f"Resultado: {eval(expr, {'__builtins__': {}}, {})}")
     except: await u.message.reply_text("Expresión inválida")
+
+def es_operacion(texto):
+    return bool(re.fullmatch(r"[0-9+\-*/^()×÷.= ]+", texto.strip()))
+
+async def auto_resolver(u, c):
+    texto = (u.message.text or "").strip()
+    if not texto or not es_operacion(texto):
+        return
+
+    texto_limpio = (
+        texto.replace("×", "*")
+        .replace("÷", "/")
+        .replace("^", "**")
+    )
+    try:
+        resultado = parse_expr(
+            texto_limpio,
+            transformations=MATH_TRANSFORMATIONS,
+            evaluate=True,
+        )
+        resultado = sympy.simplify(resultado)
+        await u.message.reply_text(f"「✿」 **{texto} = {resultado}**", parse_mode="Markdown")
+    except Exception:
+        # Los textos que parecen operaciones, pero no son válidos, se ignoran.
+        return
+
+async def resolver(u, c):
+    if not c.args:
+        await u.message.reply_text("「✿」 Uso: `/resolver 2x+5=15`", parse_mode="Markdown")
+        return
+
+    ecuacion = " ".join(c.args).replace("×", "*").replace("÷", "/").replace("^", "**")
+    try:
+        if "=" not in ecuacion:
+            raise ValueError("falta el signo igual")
+        izquierda, derecha = ecuacion.split("=", 1)
+        x = sympy.Symbol("x")
+        transformaciones = MATH_TRANSFORMATIONS
+        expr = (
+            parse_expr(izquierda, transformations=transformaciones, local_dict={"x": x})
+            - parse_expr(derecha, transformations=transformaciones, local_dict={"x": x})
+        )
+        soluciones = sympy.solve(expr, x)
+        if not soluciones:
+            await u.message.reply_text("「✿」 No encontré una solución para esa ecuación")
+            return
+        await u.message.reply_text(
+            f"「✿」 **{ecuacion}**\nResultado: **x = {soluciones[0]}**",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        await u.message.reply_text("「✿」 No pude resolver esa ecuación")
+
+def _openai_completion(system_prompt, user_prompt, max_tokens):
+    if not openai_client:
+        raise RuntimeError("OPENAI_API_KEY no está configurada en los secretos")
+    response = openai_client.chat.completions.create(
+        model="gpt-5.4-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_completion_tokens=max_tokens,
+    )
+    return response.choices[0].message.content or "No recibí una respuesta."
+
+async def explicar(u, c):
+    tema = " ".join(c.args).strip()
+    if not tema:
+        await u.message.reply_text("「✿」 Uso: `/explicar derivadas`", parse_mode="Markdown")
+        return
+    msg = await u.message.reply_text(f"「✿」 ⏳ Explicando {tema}...")
+    try:
+        respuesta = await asyncio.to_thread(
+            _openai_completion,
+            "Eres un profesor. Explica simple en español con ejemplos.",
+            f"Explica: {tema}",
+            500,
+        )
+        await msg.edit_text(f"「✿」 Explicación de {tema}:\n\n{respuesta[:3900]}")
+    except Exception as e:
+        logging.exception("explicar error")
+        await msg.edit_text(f"「✿」 Error al explicar: {e}")
+
+async def examen(u, c):
+    tema = " ".join(c.args).strip() if c.args else "General"
+    msg = await u.message.reply_text(f"「✿」 ⏳ Generando 5 ejercicios de {tema}...")
+    try:
+        respuesta = await asyncio.to_thread(
+            _openai_completion,
+            "Genera 5 ejercicios con sus respuestas al final. Escribe en español.",
+            f"Genera 5 ejercicios de: {tema}",
+            700,
+        )
+        await msg.edit_text(f"「✿」 5 EJERCICIOS DE {tema.upper()}:\n\n{respuesta[:3900]}")
+    except Exception as e:
+        logging.exception("examen error")
+        await msg.edit_text(f"「✿」 Error al generar el examen: {e}")
 async def ppt(u,c):
     opciones = ["piedra","papel","tijera"]
     bot = random.choice(opciones)
@@ -556,12 +676,32 @@ async def kick(u,c):
         await msg.reply_text(f"❌ Error: {e}")
 async def ban(u,c): await u.message.reply_text("Baneado... necesitas darme admin")
 async def warn(u,c): await u.message.reply_text("Advertencia enviada ⚠️")
-async def link(u,c): await u.message.reply_text("Link del grupo: pide a un admin")
+
+async def link(u,c):
+    try:
+        invite_link = await c.bot.export_chat_invite_link(u.effective_chat.id)
+        await u.message.reply_text(
+            f"「✿」 **Link del grupo:**\n{invite_link}",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        await u.message.reply_text("「✿」 No tengo permisos para crear links")
 
 # --- SHOP / IA ---
-async def premium(u,c): await u.message.reply_text("VIP: 10 soles al mes. Contacta a /soporte")
+async def premium(u,c):
+    user = get_user(u.effective_user.id)
+    if user.get("vip", False):
+        await u.message.reply_text("「✿」 Ya eres **VIP** 👑", parse_mode="Markdown")
+        return
+    user["vip"] = True
+    guardar_db(db)
+    await u.message.reply_text("「✿」 Compraste **VIP** 👑", parse_mode="Markdown")
+
 async def tienda(u,c): await u.message.reply_text("Tienda de productos: Proximamente")
-async def soporte(u,c): await u.message.reply_text("Habla con @tu_usuario para soporte humano")
+
+async def soporte(u,c):
+    await u.message.reply_text("「✿」 Un admin te atenderá pronto.\nDescribe tu problema aquí.")
+
 async def imagine(u,c): await u.message.reply_text("Generar imagen con IA: Necesitas API Key. Te ayudo a ponerla")
 
 # --- REGISTRO ---
@@ -570,7 +710,8 @@ app = A().token(T).build()
 CMDS = {
     "start": start, "help": help, "ping": ping, "dado": dado, "coin": coin,
     "chiste": chiste, "frase": frase, "picante": picante, "bola8": bola8,
-    "calcular": calcular, "ppt": ppt, "ship": ship, "cun": cun, "preniar": preniar,
+    "calcular": calcular, "resolver": resolver, "explicar": explicar, "examen": examen,
+    "ppt": ppt, "ship": ship, "cun": cun, "preniar": preniar,
     "sorteo": sorteo, "meme": meme, "gato": gato, "perro": perro,
     "stickerpreniar": stickerpreniar, "sticker": sticker,
     "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3, "tt": tt,
@@ -583,6 +724,7 @@ CMDS = {
 for cmd, fn in CMDS.items():
     app.add_handler(C(cmd, fn))
 
+app.add_handler(M(F.TEXT & ~F.COMMAND, auto_resolver))
 app.add_handler(CallbackQueryHandler(next_meme_handler, pattern="^meme_"))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(dl_|vdl_)"))
 
