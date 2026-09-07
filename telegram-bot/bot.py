@@ -91,7 +91,7 @@ async def help(u,c):
         "DANTE BOT - COMANDOS\n"
         "General: /start /help /ping /calcular /resolver /explicar /examen /frase /chiste /8ball /dado /coin /ppt /sorteo\n"
         "Diversion: /ship /cun /preniar /stickerpreniar /sticker /meme /picante /gato /perro /imagine\n"
-        "Media: /playaudio /video /ytmp3 /yts\n"
+        "Media: /playaudio /video /ytmp3 /yts /tt /fbmp3\n"
         "Economia: /balance /trabajar /diario /daily /robar /tiendaeco /tienda /comprar /gacha /tickets /inventario\n"
         "Admin: /kick /ban /warn /link\n"
         "Shop: /premium /tienda /soporte"
@@ -475,6 +475,78 @@ async def video(u,c):
 
 async def ytmp3(u,c): await playaudio(u,c)
 
+def es_facebook(url):
+    patrones = (
+        r"https?://(?:www\.)?facebook\.com/",
+        r"https?://fb\.watch/",
+        r"https?://m\.facebook\.com/",
+        r"https?://mbasic\.facebook\.com/",
+    )
+    return any(re.match(patron, url, re.IGNORECASE) for patron in patrones)
+
+def descargar_audio_facebook(url):
+    prefix = f"/tmp/dante_fbmp3_{int(time.time() * 1000)}"
+    opciones = {
+        "format": "bestaudio/best",
+        "outtmpl": f"{prefix}.%(ext)s",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+    }
+    with yt_dlp.YoutubeDL(opciones) as ydl:
+        informacion = ydl.extract_info(url, download=True)
+        titulo = informacion.get("title", "Facebook Audio")
+        archivo_original = ydl.prepare_filename(informacion)
+        archivo_mp3 = os.path.splitext(archivo_original)[0] + ".mp3"
+    return archivo_mp3, titulo
+
+async def fbmp3(u,c):
+    if not c.args:
+        await u.message.reply_text(
+            "❌ Debes colocar un enlace de Facebook.\n\n"
+            "Ejemplo:\n/fbmp3 https://www.facebook.com/..."
+        )
+        return
+
+    url = c.args[0].strip()
+    if not es_facebook(url):
+        await u.message.reply_text("❌ Ese enlace no parece ser de Facebook.")
+        return
+
+    mensaje = await u.message.reply_text("⏳ Descargando el audio de Facebook...")
+    archivo = None
+    try:
+        archivo, titulo = await asyncio.to_thread(descargar_audio_facebook, url)
+        if not os.path.exists(archivo):
+            raise FileNotFoundError("No se encontró el archivo MP3")
+
+        if os.path.getsize(archivo) > 50 * 1024 * 1024:
+            raise ValueError("El audio supera el límite de Telegram")
+
+        await mensaje.edit_text("✅ Audio descargado.\n📤 Enviándolo...")
+        with open(archivo, "rb") as audio:
+            await u.message.reply_audio(
+                audio=audio,
+                title=titulo[:64],
+                performer="Facebook → MP3",
+            )
+        await mensaje.delete()
+    except Exception:
+        logging.exception("fbmp3 error")
+        await mensaje.edit_text(
+            "❌ No pude descargar ese enlace.\n\n"
+            "Puede que el video sea privado, requiera iniciar sesión "
+            "o que Facebook no permita acceder a él."
+        )
+    finally:
+        if archivo and os.path.exists(archivo):
+            os.remove(archivo)
+
 async def tt(u,c):
     if not c.args:
         await u.message.reply_text(
@@ -714,7 +786,7 @@ CMDS = {
     "ppt": ppt, "ship": ship, "cun": cun, "preniar": preniar,
     "sorteo": sorteo, "meme": meme, "gato": gato, "perro": perro,
     "stickerpreniar": stickerpreniar, "sticker": sticker,
-    "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3, "tt": tt,
+    "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3, "tt": tt, "fbmp3": fbmp3,
     "balance": balance, "trabajar": trabajar, "diario": diario, "daily": daily, "robar": robar,
     "tiendaeco": tiendaeco, "gacha": gacha, "tickets": tickets, "inventario": inventario,
     "kick": kick, "ban": ban, "warn": warn, "link": link,
