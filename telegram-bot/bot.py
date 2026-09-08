@@ -36,6 +36,7 @@ ELEVENLABS_API_KEY = (
     os.getenv("ELEVENLABS_KEY")
     or os.getenv("ELEVENLABS_API_KEY")
 )
+PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
 MATH_TRANSFORMATIONS = standard_transformations + (
     implicit_multiplication_application,
     convert_xor,
@@ -578,9 +579,12 @@ async def descargar_audio_url(session, audio_url, timeout):
 async def buscar_sonido_pixabay(texto):
     timeout = aiohttp.ClientTimeout(total=15)
     async with aiohttp.ClientSession() as session:
+        params = {"q": texto, "per_page": 3}
+        if PIXABAY_API_KEY:
+            params["key"] = PIXABAY_API_KEY
         async with session.get(
             "https://pixabay.com/api/sound-effects/",
-            params={"q": texto, "per_page": 3},
+            params=params,
             timeout=timeout,
         ) as response:
             if response.status != 200:
@@ -615,7 +619,7 @@ async def crear_sonido_elevenlabs(prompt):
                 json={
                     "text": prompt,
                     "duration_seconds": 3,
-                    "prompt_influence": 0.7,
+                    "prompt_influence": 0.8,
                 },
                 timeout=timeout,
             ) as response:
