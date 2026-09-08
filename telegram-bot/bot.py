@@ -113,7 +113,7 @@ async def help(u,c):
         "DANTE BOT - COMANDOS\n"
         "General: /start /help /ping /calcular /resolver /explicar /examen /frase /chiste /8ball /dado /coin /ppt /sorteo\n"
         "Diversion: /ship /cun /preniar /stickerpreniar /sticker /meme /picante /gato /perro /imagine\n"
-        "Media: /playaudio /video /ytmp3 /yts /tt /fbmp3 /sonidos\n"
+        "Media: /playaudio /video /ytmp3 /yts /tt /fbmp3 /sonidos /creditos\n"
         "Economia: /balance /trabajar /diario /daily /robar /tiendaeco /tienda /comprar /gacha /tickets /inventario\n"
         "Admin: /kick /ban /warn /link\n"
         "Shop: /premium /tienda /soporte"
@@ -695,6 +695,45 @@ async def sonidos(u,c):
         logging.exception("sonidos send error")
         await mensaje.edit_text("❌ Encontré el sonido, pero Telegram no pudo enviarlo.")
 
+async def creditos(u,c):
+    if not ELEVENLABS_API_KEY:
+        await u.message.reply_text("❌ La API de ElevenLabs no está configurada.")
+        return
+
+    await c.bot.send_chat_action(
+        chat_id=u.effective_chat.id,
+        action="typing",
+    )
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(
+            headers={"xi-api-key": ELEVENLABS_API_KEY}
+        ) as session:
+            async with session.get(
+                "https://api.elevenlabs.io/v1/user/subscription",
+                timeout=timeout,
+            ) as response:
+                if response.status != 200:
+                    raise RuntimeError(f"HTTP {response.status}")
+                datos = await response.json(content_type=None)
+
+        total = int(datos["character_limit"])
+        usado = int(datos["character_count"])
+        sobra = max(total - usado, 0)
+        await u.message.reply_text(
+            "💰 Créditos ElevenLabs\n\n"
+            f"Total del mes: {total:,}\n"
+            f"Usado: {usado:,}\n"
+            f"Te sobra: {sobra:,} caracteres\n\n"
+            "Se reinician el día 1 de cada mes"
+        )
+    except Exception:
+        logging.exception("ElevenLabs credits error")
+        await u.message.reply_text(
+            "❌ No pude consultar los créditos de ElevenLabs. "
+            "Revisa que la clave tenga permisos."
+        )
+
 async def tt(u,c):
     if not c.args:
         await u.message.reply_text(
@@ -935,7 +974,7 @@ CMDS = {
     "sorteo": sorteo, "meme": meme, "gato": gato, "perro": perro,
     "stickerpreniar": stickerpreniar, "sticker": sticker,
     "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3, "tt": tt,
-    "fbmp3": fbmp3, "sonidos": sonidos,
+    "fbmp3": fbmp3, "sonidos": sonidos, "creditos": creditos,
     "balance": balance, "trabajar": trabajar, "diario": diario, "daily": daily, "robar": robar,
     "tiendaeco": tiendaeco, "gacha": gacha, "tickets": tickets, "inventario": inventario,
     "kick": kick, "ban": ban, "warn": warn, "link": link,
