@@ -619,7 +619,7 @@ async def crear_sonido_elevenlabs(prompt):
                 json={
                     "text": prompt,
                     "duration_seconds": 3,
-                    "prompt_influence": 0.8,
+                    "prompt_influence": 0.7,
                 },
                 timeout=timeout,
             ) as response:
@@ -632,7 +632,7 @@ async def crear_sonido_elevenlabs(prompt):
         return None
 
 async def sonidos(u,c):
-    texto = " ".join(c.args).strip().lower()
+    texto = " ".join(c.args).strip()
     if not texto:
         await u.message.reply_text("Usa: /sonidos zombie grito")
         return
@@ -641,51 +641,19 @@ async def sonidos(u,c):
         chat_id=u.effective_chat.id,
         action="upload_audio",
     )
-    mensaje = await u.message.reply_text(f"🔍 Buscando «{texto}» en Pixabay...")
-    resultado = None
-
-    # Primero intenta recuperar la URL guardada para evitar otra búsqueda.
-    cache_url = cache_sonidos.get(texto)
-    if cache_url:
-        try:
-            timeout = aiohttp.ClientTimeout(total=15)
-            async with aiohttp.ClientSession() as session:
-                audio = await descargar_audio_url(session, cache_url, timeout)
-            if audio:
-                resultado = {"audio": audio, "fuente": "Pixabay (caché)"}
-                await mensaje.edit_text("✅ Lo tengo guardado. 📤 Enviándolo...")
-        except Exception:
-            logging.exception("Cached sound download error")
-
-        if resultado is None:
-            # El enlace pudo caducar; se elimina y se busca uno nuevo.
-            cache_sonidos.pop(texto, None)
-            guardar_cache_sonidos(cache_sonidos)
-
-    if resultado is None:
-        try:
-            resultado = await buscar_sonido_pixabay(texto)
-        except Exception:
-            logging.exception("Pixabay sound search error")
-
-        if resultado:
-            cache_sonidos[texto] = resultado["url"]
-            guardar_cache_sonidos(cache_sonidos)
-        else:
-            await mensaje.edit_text("No lo encontré. Creándolo con IA... espera ⏳")
-            resultado = await crear_sonido_elevenlabs(texto)
-
-    if resultado:
-        audio = resultado["audio"]
-        fuente = resultado["fuente"]
-    else:
-        await mensaje.edit_text(
-            "😅 No encontré el sonido y no pude generarlo con IA. "
-            "Intenta con otra descripción."
-        )
-        return
-
+    mensaje = await u.message.reply_text(
+        f"🎙️ Creando «{texto}» con IA... espera ⏳"
+    )
     try:
+        resultado = await crear_sonido_elevenlabs(texto)
+        if not resultado:
+            await mensaje.edit_text(
+                "❌ Error al generar el sonido. Revisa la clave de ElevenLabs, "
+                "sus permisos y los créditos disponibles."
+            )
+            return
+
+        audio, fuente = resultado
         nombre = re.sub(r"[^\w .-]", "_", texto)[:60].strip() or "sonido"
         audio_file = BytesIO(audio)
         audio_file.name = f"{nombre}.mp3"
@@ -693,11 +661,12 @@ async def sonidos(u,c):
             audio=audio_file,
             title=nombre[:64],
             performer=fuente,
+            caption=f"🔊 {texto}",
         )
-        await mensaje.edit_text(f"✅ Sonido listo ({fuente})")
+        await mensaje.edit_text("✅ Sonido creado con IA")
     except Exception:
         logging.exception("sonidos send error")
-        await mensaje.edit_text("❌ Encontré el sonido, pero Telegram no pudo enviarlo.")
+        await mensaje.edit_text("❌ Telegram no pudo enviar el sonido generado.")
 
 async def creditos(u,c):
     if not ELEVENLABS_API_KEY:
