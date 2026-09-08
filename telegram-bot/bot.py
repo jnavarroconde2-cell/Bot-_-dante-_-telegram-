@@ -32,7 +32,10 @@ logging.basicConfig(level=logging.INFO)
 T = os.getenv("Token")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+ELEVENLABS_API_KEY = (
+    os.getenv("ELEVENLABS_KEY")
+    or os.getenv("ELEVENLABS_API_KEY")
+)
 MATH_TRANSFORMATIONS = standard_transformations + (
     implicit_multiplication_application,
     convert_xor,
