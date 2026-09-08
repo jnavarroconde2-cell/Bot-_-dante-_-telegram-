@@ -32,6 +32,7 @@ logging.basicConfig(level=logging.INFO)
 T = os.getenv("Token")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 MATH_TRANSFORMATIONS = standard_transformations + (
     implicit_multiplication_application,
     convert_xor,
@@ -91,7 +92,7 @@ async def help(u,c):
         "DANTE BOT - COMANDOS\n"
         "General: /start /help /ping /calcular /resolver /explicar /examen /frase /chiste /8ball /dado /coin /ppt /sorteo\n"
         "Diversion: /ship /cun /preniar /stickerpreniar /sticker /meme /picante /gato /perro /imagine\n"
-        "Media: /playaudio /video /ytmp3 /yts /tt /fbmp3\n"
+        "Media: /playaudio /video /ytmp3 /yts /tt /fbmp3 /sonidos\n"
         "Economia: /balance /trabajar /diario /daily /robar /tiendaeco /tienda /comprar /gacha /tickets /inventario\n"
         "Admin: /kick /ban /warn /link\n"
         "Shop: /premium /tienda /soporte"
@@ -547,6 +548,101 @@ async def fbmp3(u,c):
         if archivo and os.path.exists(archivo):
             os.remove(archivo)
 
+async def buscar_sonido_pixabay(texto):
+    timeout = aiohttp.ClientTimeout(total=15)
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            "https://pixabay.com/api/sound-effects/",
+            params={"q": texto, "per_page": 3},
+            timeout=timeout,
+        ) as response:
+            if response.status != 200:
+                return None
+            resultado = await response.json(content_type=None)
+
+        hits = resultado.get("hits", [])
+        if not hits:
+            return None
+
+        audio_url = hits[0].get("audiodownload") or hits[0].get("audio")
+        if not audio_url:
+            return None
+        async with session.get(audio_url, timeout=timeout) as audio_response:
+            if audio_response.status != 200:
+                return None
+            audio = await audio_response.read()
+        return audio, "Pixabay"
+
+async def crear_sonido_elevenlabs(prompt):
+    if not ELEVENLABS_API_KEY:
+        return None
+    try:
+        timeout = aiohttp.ClientTimeout(total=35)
+        async with aiohttp.ClientSession(
+            headers={
+                "xi-api-key": ELEVENLABS_API_KEY,
+                "Content-Type": "application/json",
+            }
+        ) as session:
+            async with session.post(
+                "https://api.elevenlabs.io/v1/sound-generation",
+                json={
+                    "text": prompt,
+                    "duration_seconds": 3,
+                    "prompt_influence": 0.7,
+                },
+                timeout=timeout,
+            ) as response:
+                if response.status != 200:
+                    logging.warning("ElevenLabs respondió HTTP %s", response.status)
+                    return None
+                return await response.read(), "ElevenLabs"
+    except Exception:
+        logging.exception("ElevenLabs sound generation error")
+        return None
+
+async def sonidos(u,c):
+    texto = " ".join(c.args).strip()
+    if not texto:
+        await u.message.reply_text("Usa: /sonidos zombie grito")
+        return
+
+    mensaje = await u.message.reply_text(f"🔍 Buscando «{texto}» en Pixabay...")
+    resultado = None
+    try:
+        resultado = await buscar_sonido_pixabay(texto)
+    except Exception:
+        logging.exception("Pixabay sound search error")
+
+    fuente = None
+    if resultado:
+        audio, fuente = resultado
+    else:
+        await mensaje.edit_text("No lo encontré. Creándolo con IA... espera ⏳")
+        resultado = await crear_sonido_elevenlabs(texto)
+        if resultado:
+            audio, fuente = resultado
+
+    if not resultado:
+        await mensaje.edit_text(
+            "😅 No encontré el sonido y no pude generarlo con IA. "
+            "Intenta con otra descripción."
+        )
+        return
+
+    try:
+        audio_file = BytesIO(audio)
+        audio_file.name = f"{texto[:60]}.mp3"
+        await u.message.reply_audio(
+            audio=audio_file,
+            title=texto[:64],
+            performer=fuente,
+        )
+        await mensaje.edit_text(f"✅ Sonido listo ({fuente})")
+    except Exception:
+        logging.exception("sonidos send error")
+        await mensaje.edit_text("❌ Encontré el sonido, pero Telegram no pudo enviarlo.")
+
 async def tt(u,c):
     if not c.args:
         await u.message.reply_text(
@@ -786,7 +882,8 @@ CMDS = {
     "ppt": ppt, "ship": ship, "cun": cun, "preniar": preniar,
     "sorteo": sorteo, "meme": meme, "gato": gato, "perro": perro,
     "stickerpreniar": stickerpreniar, "sticker": sticker,
-    "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3, "tt": tt, "fbmp3": fbmp3,
+    "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3, "tt": tt,
+    "fbmp3": fbmp3, "sonidos": sonidos,
     "balance": balance, "trabajar": trabajar, "diario": diario, "daily": daily, "robar": robar,
     "tiendaeco": tiendaeco, "gacha": gacha, "tickets": tickets, "inventario": inventario,
     "kick": kick, "ban": ban, "warn": warn, "link": link,
