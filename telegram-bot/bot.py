@@ -1,6 +1,8 @@
 import os
 import random
 import json
+import base64
+import hashlib
 import logging
 import time
 import subprocess
@@ -603,11 +605,74 @@ async def buscar_sonido_pixabay(texto):
             return None
         return {"audio": audio, "fuente": "Pixabay", "url": audio_url}
 
-async def crear_sonido_elevenlabs(prompt):
+def parsear_sonido(texto_completo):
+    partes = texto_completo.strip().split()
+    if not partes:
+        return None
+
+    estilos = {"cinematic", "cartoon", "realistic", "8bit"}
+    estilo = "realistic"
+    if partes and partes[-1].lower() in estilos:
+        estilo = partes.pop().lower()
+
+    duracion = 3.0
+    if partes and re.fullmatch(r"\d+(?:\.\d+)?", partes[-1]):
+        duracion = min(max(float(partes.pop()), 0.5), 10.0)
+
+    texto = " ".join(partes).strip()
+    if not texto:
+        return None
+    return texto, duracion, estilo
+
+
+def clave_sonido(texto, duracion, estilo):
+    return f"{texto}|{duracion:g}|{estilo}"
+
+
+def token_sonido(cache_key):
+    return hashlib.sha256(cache_key.encode("utf-8")).hexdigest()[:12]
+
+
+def teclado_sonido(cache_key, duracion):
+    token = token_sonido(cache_key)
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "🔄 Regenerar",
+            callback_data=f"snd|regen|{token}|{duracion:g}",
+        ),
+        InlineKeyboardButton(
+            "⏱️ +2 seg",
+            callback_data=f"snd|more|{token}|{duracion:g}",
+        ),
+    ]])
+
+
+def buscar_cache_sonido_por_token(token):
+    for cache_key, registro in cache_sonidos.items():
+        if cache_key.startswith("__"):
+            continue
+        if token_sonido(cache_key) == token and isinstance(registro, dict):
+            return cache_key, registro
+    return None, None
+
+
+def decodificar_cache_sonido(registro):
+    if not isinstance(registro, dict):
+        return None
+    contenido = registro.get("audio_base64")
+    if not contenido:
+        return None
+    try:
+        return base64.b64decode(contenido, validate=True)
+    except (ValueError, TypeError):
+        return None
+
+
+async def crear_sonido_elevenlabs(prompt, duracion):
     if not ELEVENLABS_API_KEY:
         return None
     try:
-        timeout = aiohttp.ClientTimeout(total=35)
+        timeout = aiohttp.ClientTimeout(total=45)
         async with aiohttp.ClientSession(
             headers={
                 "xi-api-key": ELEVENLABS_API_KEY,
@@ -618,55 +683,151 @@ async def crear_sonido_elevenlabs(prompt):
                 "https://api.elevenlabs.io/v1/sound-generation",
                 json={
                     "text": prompt,
-                    "duration_seconds": 3,
+                    "duration_seconds": duracion,
                     "prompt_influence": 0.7,
                 },
                 timeout=timeout,
             ) as response:
                 if response.status != 200:
-                    logging.warning("ElevenLabs respondió HTTP %s", response.status)
+                    detalle = (await response.text())[:500]
+                    logging.warning(
+                        "ElevenLabs respondió HTTP %s: %s",
+                        response.status,
+                        detalle,
+                    )
                     return None
                 return await response.read(), "ElevenLabs"
     except Exception:
         logging.exception("ElevenLabs sound generation error")
         return None
 
+
+async def procesar_sonido(message, bot, texto_completo, force_regenerate=False,
+                          duracion_override=None, estilo_override=None):
+    datos = parsear_sonido(texto_completo)
+    if not datos:
+        await message.reply_text(
+            "Usa: /sonidos zombie grito 3 cinematic\n"
+            "Estilos: realistic, cinematic, cartoon, 8bit"
+        )
+        return
+
+    texto, duracion, estilo = datos
+    if duracion_override is not None:
+        duracion = min(max(float(duracion_override), 0.5), 10.0)
+    if estilo_override:
+        estilo = estilo_override
+
+    cache_key = clave_sonido(texto, duracion, estilo)
+    audio = None if force_regenerate else decodificar_cache_sonido(
+        cache_sonidos.get(cache_key)
+    )
+
+    await bot.send_chat_action(
+        chat_id=message.chat_id,
+        action="upload_audio",
+    )
+
+    if audio:
+        estado = await message.reply_text("✅ Encontrado en la caché")
+        fuente = "Caché de DANTE"
+    else:
+        estado = await message.reply_text(
+            f"🎙️ Creando «{texto}» con IA\n"
+            f"Duración: {duracion:g}s | Estilo: {estilo}... ⏳"
+        )
+        resultado = await crear_sonido_elevenlabs(
+            f"{texto}, {estilo} sound effect",
+            duracion,
+        )
+        if not resultado:
+            await estado.edit_text(
+                "❌ Falló la generación con IA. Revisa la clave, los permisos "
+                "y los créditos de ElevenLabs con /creditos."
+            )
+            return
+        audio, fuente = resultado
+        cache_sonidos[cache_key] = {
+            "texto": texto,
+            "duracion": duracion,
+            "estilo": estilo,
+            "audio_base64": base64.b64encode(audio).decode("ascii"),
+        }
+        guardar_cache_sonidos(cache_sonidos)
+
+    nombre = re.sub(r"[^\w .-]", "_", texto)[:60].strip() or "sonido"
+    audio_file = BytesIO(audio)
+    audio_file.name = f"{nombre}.mp3"
+    await message.reply_audio(
+        audio=audio_file,
+        title=nombre[:64],
+        performer=fuente,
+        caption=f"🔊 {texto}\nDuración: {duracion:g}s | Estilo: {estilo}",
+        reply_markup=teclado_sonido(cache_key, duracion),
+    )
+    await estado.edit_text("✅ Sonido listo")
+
+
 async def sonidos(u,c):
     texto = " ".join(c.args).strip()
     if not texto:
-        await u.message.reply_text("Usa: /sonidos zombie grito")
+        await u.message.reply_text(
+            "Usa: /sonidos zombie grito 3 cinematic\n"
+            "Estilos: realistic, cinematic, cartoon, 8bit"
+        )
+        return
+    await procesar_sonido(u.message, c.bot, texto)
+
+
+async def sonidos_callback(u, c):
+    query = u.callback_query
+    partes = query.data.split("|")
+    if len(partes) != 4:
+        await query.answer()
         return
 
-    await c.bot.send_chat_action(
-        chat_id=u.effective_chat.id,
-        action="upload_audio",
-    )
-    mensaje = await u.message.reply_text(
-        f"🎙️ Creando «{texto}» con IA... espera ⏳"
-    )
+    accion, token, duracion_raw = partes[1], partes[2], partes[3]
     try:
-        resultado = await crear_sonido_elevenlabs(texto)
-        if not resultado:
-            await mensaje.edit_text(
-                "❌ Error al generar el sonido. Revisa la clave de ElevenLabs, "
-                "sus permisos y los créditos disponibles."
-            )
-            return
+        duracion = float(duracion_raw)
+    except ValueError:
+        await query.edit_message_text("❌ La duración indicada no es válida.")
+        return
 
-        audio, fuente = resultado
-        nombre = re.sub(r"[^\w .-]", "_", texto)[:60].strip() or "sonido"
-        audio_file = BytesIO(audio)
-        audio_file.name = f"{nombre}.mp3"
-        await u.message.reply_audio(
-            audio=audio_file,
-            title=nombre[:64],
-            performer=fuente,
-            caption=f"🔊 {texto}",
+    cache_key, registro = buscar_cache_sonido_por_token(token)
+    if not registro:
+        await query.edit_message_text(
+            "❌ Esta acción caducó. Genera un sonido nuevo con /sonidos."
         )
-        await mensaje.edit_text("✅ Sonido creado con IA")
-    except Exception:
-        logging.exception("sonidos send error")
-        await mensaje.edit_text("❌ Telegram no pudo enviar el sonido generado.")
+        return
+
+    texto = registro.get("texto", "")
+    estilo = registro.get("estilo", "realistic")
+    if not texto:
+        await query.edit_message_text("❌ No pude recuperar ese sonido.")
+        return
+
+    if accion == "more":
+        duracion = min(duracion + 2.0, 10.0)
+        await query.answer(f"Creando de {duracion:g} segundos...")
+        await procesar_sonido(
+            query.message,
+            c.bot,
+            texto,
+            duracion_override=duracion,
+            estilo_override=estilo,
+        )
+    elif accion == "regen":
+        await query.answer("Regenerando con IA...")
+        await procesar_sonido(
+            query.message,
+            c.bot,
+            texto,
+            force_regenerate=True,
+            duracion_override=duracion,
+            estilo_override=estilo,
+        )
+    else:
+        await query.answer("Acción no reconocida.")
 
 async def creditos(u,c):
     if not ELEVENLABS_API_KEY:
@@ -958,6 +1119,7 @@ for cmd, fn in CMDS.items():
     app.add_handler(C(cmd, fn))
 
 app.add_handler(M(F.TEXT & ~F.COMMAND, auto_resolver))
+app.add_handler(CallbackQueryHandler(sonidos_callback, pattern=r"^snd\|"))
 app.add_handler(CallbackQueryHandler(next_meme_handler, pattern="^meme_"))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(dl_|vdl_)"))
 
