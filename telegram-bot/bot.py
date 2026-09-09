@@ -3,6 +3,7 @@ import random
 import json
 import base64
 import hashlib
+import glob
 import logging
 import time
 import subprocess
@@ -140,6 +141,7 @@ async def start(u,c):
         "/respuestas <área> - Muestra la clave del último examen\n"
         "/explicar <tema> - Explica un tema\n"
         "/meme <tema> - Genera ideas para memes\n"
+        "/ttmp3 <enlace> - Extrae audio de TikTok\n"
         "/soporte - Chat con IA\n\n"
         "Usa /help para ver todos los comandos."
     )
@@ -149,7 +151,7 @@ async def help(u,c):
         "DANTE BOT - COMANDOS\n"
         "General: /start /help /ping /calcular /resolver /explicar /examen /respuestas /frase /chiste /8ball /dado /coin /ppt /sorteo\n"
         "Diversion: /ship /cun /preniar /stickerpreniar /sticker /meme /picante /gato /perro /imagine\n"
-        "Media: /playaudio /video /ytmp3 /yts /tt /fbmp3 /sonidos /creditos\n"
+        "Media: /playaudio /video /ytmp3 /yts /tt /ttmp3 /fbmp3 /sonidos /creditos\n"
         "Economia: /balance /trabajar /diario /daily /robar /tiendaeco /tienda /comprar /gacha /tickets /inventario\n"
         "Admin: /kick /ban /warn /link\n"
         "Shop: /premium /tienda /soporte /salirsoporte"
@@ -1197,6 +1199,98 @@ async def tt(u,c):
             f"Toma el link directo:\n{data['video']}"
         )
 
+
+def es_tiktok(url):
+    return bool(re.search(
+        r"(?:^|//)(?:www\.|vm\.|lite\.)?tiktok\.com(?:/|$)",
+        url,
+        re.IGNORECASE,
+    ))
+
+
+def descargar_audio_tiktok(url):
+    prefijo = f"/tmp/dante_ttmp3_{time.time_ns()}"
+    opciones = {
+        "format": "bestaudio/best",
+        "outtmpl": f"{prefijo}.%(ext)s",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+    }
+    with yt_dlp.YoutubeDL(opciones) as ydl:
+        informacion = ydl.extract_info(url, download=True)
+        titulo = informacion.get("title", "Audio TikTok")
+        archivo_original = ydl.prepare_filename(informacion)
+        archivo_mp3 = os.path.splitext(archivo_original)[0] + ".mp3"
+    return archivo_mp3, titulo, prefijo
+
+
+async def ttmp3(u,c):
+    if not c.args:
+        await u.message.reply_text(
+            "Usa: `/ttmp3 https://www.tiktok.com/...`\n"
+            "También acepta enlaces de TikTok Lite.",
+            parse_mode="Markdown",
+        )
+        return
+
+    url = c.args[0].strip()
+    if not es_tiktok(url):
+        await u.message.reply_text(
+            "❌ Ese enlace no parece ser un TikTok válido."
+        )
+        return
+
+    estado = await u.message.reply_text("⏳ Extrayendo audio de TikTok...")
+    archivo = None
+    prefijo = None
+    try:
+        await c.bot.send_chat_action(
+            chat_id=u.effective_chat.id,
+            action="upload_audio",
+        )
+        archivo, titulo, prefijo = await asyncio.to_thread(
+            descargar_audio_tiktok,
+            url,
+        )
+        if not os.path.exists(archivo):
+            raise FileNotFoundError("yt-dlp no generó el MP3")
+        if os.path.getsize(archivo) > 50 * 1024 * 1024:
+            raise ValueError("El audio supera el límite de Telegram")
+
+        await estado.edit_text("✅ Audio extraído. Enviándolo...")
+        with open(archivo, "rb") as audio:
+            await u.message.reply_audio(
+                audio=audio,
+                title=titulo[:64],
+                performer="TikTok → MP3",
+            )
+        await estado.delete()
+    except yt_dlp.utils.DownloadError:
+        logging.exception("ttmp3 descarga error")
+        await estado.edit_text(
+            "❌ No se pudo descargar ese TikTok. Puede ser privado, "
+            "estar restringido o tener un enlace inválido."
+        )
+    except Exception:
+        logging.exception("ttmp3 error")
+        await estado.edit_text(
+            "❌ No pude extraer el audio. Intenta con otro enlace de TikTok."
+        )
+    finally:
+        if prefijo:
+            for temporal in glob.glob(f"{prefijo}*"):
+                try:
+                    os.remove(temporal)
+                except OSError:
+                    logging.warning("No se pudo borrar temporal: %s", temporal)
+
+
 async def get_tiktok_video(url):
     apis = [
         ("https://api.tikwm.com/video/", "tikwm"),
@@ -1435,7 +1529,8 @@ CMDS = {
     "ppt": ppt, "ship": ship, "cun": cun, "preniar": preniar,
     "sorteo": sorteo, "meme": meme, "gato": gato, "perro": perro,
     "stickerpreniar": stickerpreniar, "sticker": sticker,
-    "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3, "tt": tt,
+    "yts": yts, "playaudio": playaudio, "video": video, "ytmp3": ytmp3,
+    "tt": tt, "ttmp3": ttmp3,
     "fbmp3": fbmp3, "sonidos": sonidos, "creditos": creditos,
     "balance": balance, "trabajar": trabajar, "diario": diario, "daily": daily, "robar": robar,
     "tiendaeco": tiendaeco, "gacha": gacha, "tickets": tickets, "inventario": inventario,
