@@ -34,6 +34,9 @@ logging.basicConfig(level=logging.INFO)
 T = os.getenv("Token")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
 ELEVENLABS_API_KEY = (
     os.getenv("ELEVENLABS_KEY")
     or os.getenv("ELEVENLABS_API_KEY")
@@ -119,7 +122,7 @@ async def help(u,c):
         "Media: /playaudio /video /ytmp3 /yts /tt /fbmp3 /sonidos /creditos\n"
         "Economia: /balance /trabajar /diario /daily /robar /tiendaeco /tienda /comprar /gacha /tickets /inventario\n"
         "Admin: /kick /ban /warn /link\n"
-        "Shop: /premium /tienda /soporte"
+        "Shop: /premium /tienda /soporte /salirsoporte"
     )
     await u.message.reply_text(texto)
 
@@ -164,31 +167,70 @@ async def auto_resolver(u, c):
         return
 
 async def resolver(u, c):
-    if not c.args:
-        await u.message.reply_text("「✿」 Uso: `/resolver 2x+5=15`", parse_mode="Markdown")
+    if (
+        not c.args
+        and u.message.reply_to_message
+        and u.message.reply_to_message.photo
+    ):
+        await resolver_foto(u, c, u.message.reply_to_message)
         return
 
-    ecuacion = " ".join(c.args).replace("×", "*").replace("÷", "/").replace("^", "**")
-    try:
-        if "=" not in ecuacion:
-            raise ValueError("falta el signo igual")
-        izquierda, derecha = ecuacion.split("=", 1)
-        x = sympy.Symbol("x")
-        transformaciones = MATH_TRANSFORMATIONS
-        expr = (
-            parse_expr(izquierda, transformations=transformaciones, local_dict={"x": x})
-            - parse_expr(derecha, transformations=transformaciones, local_dict={"x": x})
-        )
-        soluciones = sympy.solve(expr, x)
-        if not soluciones:
-            await u.message.reply_text("「✿」 No encontré una solución para esa ecuación")
-            return
+    if not c.args:
         await u.message.reply_text(
-            f"「✿」 **{ecuacion}**\nResultado: **x = {soluciones[0]}**",
+            "「✿」 Uso: `/resolver 2x+5=15`\n\n"
+            "También puedes responder a una foto de un ejercicio con /resolver.",
             parse_mode="Markdown",
         )
+        return
+
+    try:
+        ejercicio = " ".join(c.args).strip()
+        msg = await u.message.reply_text("「✿」 ⏳ Resolviendo paso a paso...")
+        respuesta = await _ai_completion(
+            "Eres un profesor experto en matemáticas. Responde en español, "
+            "usa lenguaje sencillo y no inventes datos.",
+            (
+                "Resuelve correctamente este ejercicio paso a paso:\n"
+                f"{ejercicio}\n\n"
+                "Comprueba el resultado y usa este formato:\n"
+                "🧮 EJERCICIO\n📚 PROCEDIMIENTO\n"
+                "Paso 1:\nPaso 2:\nPaso 3:\n✅ RESPUESTA FINAL:"
+            ),
+            image_bytes=None,
+            max_tokens=900,
+        )
+        await msg.edit_text(respuesta[:3900])
     except Exception:
-        await u.message.reply_text("「✿」 No pude resolver esa ecuación")
+        logging.exception("resolver IA error")
+        await u.message.reply_text("「✿」 No pude resolver ese ejercicio.")
+
+
+async def resolver_foto(u, c, mensaje_foto):
+    estado = await u.message.reply_text("「✿」 ⏳ Analizando la foto...")
+    try:
+        foto = mensaje_foto.photo[-1]
+        archivo = await c.bot.get_file(foto.file_id)
+        imagen_bytes = bytes(await archivo.download_as_bytearray())
+        respuesta = await _ai_completion(
+            "Eres un profesor experto en matemáticas. Responde en español.",
+            (
+                "Analiza cuidadosamente esta imagen. Lee el ejercicio, identifica "
+                "los datos, resuélvelo paso a paso, comprueba el resultado y da "
+                "la respuesta final. Si no contiene un ejercicio matemático, "
+                "indícalo. No inventes números.\n\n"
+                "Formato:\n🧮 EJERCICIO DETECTADO:\n📚 PROCEDIMIENTO:\n"
+                "Paso 1:\nPaso 2:\nPaso 3:\n✅ RESPUESTA FINAL:"
+            ),
+            image_bytes=imagen_bytes,
+            max_tokens=1200,
+        )
+        await estado.edit_text(respuesta[:3900])
+    except Exception:
+        logging.exception("resolver foto error")
+        await estado.edit_text(
+            "❌ No pude analizar la foto. Para imágenes necesitas configurar "
+            "OPENROUTER_API_KEY."
+        )
 
 def _openai_completion(system_prompt, user_prompt, max_tokens):
     if not openai_client:
@@ -203,6 +245,91 @@ def _openai_completion(system_prompt, user_prompt, max_tokens):
     )
     return response.choices[0].message.content or "No recibí una respuesta."
 
+
+async def _openrouter_completion(system_prompt, user_prompt, image_bytes=None):
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY no está configurada")
+
+    contenido = user_prompt
+    if image_bytes is not None:
+        imagen_base64 = base64.b64encode(image_bytes).decode("ascii")
+        contenido = [
+            {"type": "text", "text": user_prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{imagen_base64}",
+                },
+            },
+        ]
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://replit.com",
+        "X-Title": "DANTE Telegram Bot",
+    }
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": contenido},
+        ],
+    }
+    timeout = aiohttp.ClientTimeout(total=90)
+    async with aiohttp.ClientSession(headers=headers) as session:
+        async with session.post(
+            OPENROUTER_URL,
+            json=payload,
+            timeout=timeout,
+        ) as response:
+            if response.status != 200:
+                logging.warning(
+                    "OpenRouter respondió HTTP %s",
+                    response.status,
+                )
+                raise RuntimeError(f"OpenRouter HTTP {response.status}")
+            datos = await response.json(content_type=None)
+
+    try:
+        contenido_respuesta = datos["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError("Respuesta inválida de OpenRouter") from exc
+    if isinstance(contenido_respuesta, list):
+        contenido_respuesta = " ".join(
+            item.get("text", "")
+            for item in contenido_respuesta
+            if isinstance(item, dict)
+        )
+    return contenido_respuesta or "No recibí una respuesta."
+
+
+async def _ai_completion(
+    system_prompt,
+    user_prompt,
+    image_bytes=None,
+    max_tokens=900,
+):
+    if OPENROUTER_API_KEY:
+        return await _openrouter_completion(
+            system_prompt,
+            user_prompt,
+            image_bytes=image_bytes,
+        )
+    if image_bytes is not None:
+        raise RuntimeError("OPENROUTER_API_KEY no está configurada")
+    if openai_client:
+        return await asyncio.to_thread(
+            _openai_completion,
+            system_prompt,
+            user_prompt,
+            max_tokens,
+        )
+    raise RuntimeError(
+        "Configura OPENROUTER_API_KEY u OPENAI_API_KEY en los secretos"
+    )
+
+
 async def explicar(u, c):
     tema = " ".join(c.args).strip()
     if not tema:
@@ -210,11 +337,10 @@ async def explicar(u, c):
         return
     msg = await u.message.reply_text(f"「✿」 ⏳ Explicando {tema}...")
     try:
-        respuesta = await asyncio.to_thread(
-            _openai_completion,
+        respuesta = await _ai_completion(
             "Eres un profesor. Explica simple en español con ejemplos.",
             f"Explica: {tema}",
-            500,
+            max_tokens=700,
         )
         await msg.edit_text(f"「✿」 Explicación de {tema}:\n\n{respuesta[:3900]}")
     except Exception as e:
@@ -225,11 +351,14 @@ async def examen(u, c):
     tema = " ".join(c.args).strip() if c.args else "General"
     msg = await u.message.reply_text(f"「✿」 ⏳ Generando 5 ejercicios de {tema}...")
     try:
-        respuesta = await asyncio.to_thread(
-            _openai_completion,
-            "Genera 5 ejercicios con sus respuestas al final. Escribe en español.",
-            f"Genera 5 ejercicios de: {tema}",
-            700,
+        respuesta = await _ai_completion(
+            "Genera exactamente 5 ejercicios de práctica en español, "
+            "sin resolverlos. Varía la dificultad.",
+            (
+                f"Genera 5 ejercicios sobre: {tema}\n"
+                "Al final escribe: 💡 Cuando termines, puedes pedirme las respuestas."
+            ),
+            max_tokens=1000,
         )
         await msg.edit_text(f"「✿」 5 EJERCICIOS DE {tema.upper()}:\n\n{respuesta[:3900]}")
     except Exception as e:
@@ -250,7 +379,29 @@ async def preniar(u,c): await u.message.reply_text(f"Hoy preño a: @{random.choi
 async def sorteo(u,c): await u.message.reply_text(f"🎉 Ganador del sorteo: @{random.choice(['user1','user2'])}")
 async def meme(u,c):
     cat = c.args[0].lower() if c.args else "random"
-    if cat not in CATEGORIAS: cat = "random"
+    if c.args and cat not in CATEGORIAS:
+        tema = " ".join(c.args).strip()
+        msg = await u.message.reply_text("😂 ⏳ Generando ideas para memes...")
+        try:
+            respuesta = await _ai_completion(
+                "Crea ideas de memes en español. Sé breve y creativo.",
+                (
+                    f"Tema: {tema}\n"
+                    "Genera exactamente 3 ideas.\n"
+                    "Para cada una incluye:\n"
+                    "😂 IDEA DEL MEME:\n"
+                    "📝 TEXTO SUPERIOR:\n"
+                    "📝 TEXTO INFERIOR:\n"
+                    "Usa textos cortos."
+                ),
+                max_tokens=900,
+            )
+            await msg.edit_text(respuesta[:3900])
+        except Exception:
+            logging.exception("meme IA error")
+            await msg.edit_text("❌ No pude generar ideas para ese tema.")
+        return
+
     sub = random.choice(CATEGORIAS[cat])
     try:
         async with aiohttp.ClientSession() as session:
@@ -1081,6 +1232,8 @@ async def link(u,c):
         await u.message.reply_text("「✿」 No tengo permisos para crear links")
 
 # --- SHOP / IA ---
+usuarios_soporte = set()
+
 async def premium(u,c):
     user = get_user(u.effective_user.id)
     if user.get("vip", False):
@@ -1093,7 +1246,42 @@ async def premium(u,c):
 async def tienda(u,c): await u.message.reply_text("Tienda de productos: Proximamente")
 
 async def soporte(u,c):
-    await u.message.reply_text("「✿」 Un admin te atenderá pronto.\nDescribe tu problema aquí.")
+    usuarios_soporte.add(u.effective_user.id)
+    await u.message.reply_text(
+        "💬 SOPORTE IA ACTIVADO\n"
+        "Escríbeme tu pregunta.\n"
+        "Para salir: /salirsoporte"
+    )
+
+
+async def salirsoporte(u,c):
+    usuarios_soporte.discard(u.effective_user.id)
+    await u.message.reply_text("✅ Saliste del soporte IA.")
+
+
+async def chat_soporte(u,c):
+    pregunta = u.message.text.strip()
+    estado = await u.message.reply_text("「✿」 ⏳ Pensando...")
+    try:
+        respuesta = await _ai_completion(
+            "Eres el asistente de soporte de DANTE, un bot de Telegram. "
+            "Responde amable, claro y útil en español.",
+            f"Pregunta del usuario:\n{pregunta}",
+            max_tokens=700,
+        )
+        await estado.edit_text(respuesta[:3900])
+    except Exception:
+        logging.exception("soporte IA error")
+        await estado.edit_text(
+            "❌ No pude responder en este momento. Revisa la configuración de IA."
+        )
+
+
+async def manejar_texto(u,c):
+    if u.effective_user and u.effective_user.id in usuarios_soporte:
+        await chat_soporte(u,c)
+        return
+    await auto_resolver(u,c)
 
 async def imagine(u,c): await u.message.reply_text("Generar imagen con IA: Necesitas API Key. Te ayudo a ponerla")
 
@@ -1112,13 +1300,14 @@ CMDS = {
     "balance": balance, "trabajar": trabajar, "diario": diario, "daily": daily, "robar": robar,
     "tiendaeco": tiendaeco, "gacha": gacha, "tickets": tickets, "inventario": inventario,
     "kick": kick, "ban": ban, "warn": warn, "link": link,
-    "premium": premium, "tienda": tienda, "soporte": soporte, "imagine": imagine,
+    "premium": premium, "tienda": tienda, "soporte": soporte,
+    "salirsoporte": salirsoporte, "imagine": imagine,
 }
 
 for cmd, fn in CMDS.items():
     app.add_handler(C(cmd, fn))
 
-app.add_handler(M(F.TEXT & ~F.COMMAND, auto_resolver))
+app.add_handler(M(F.TEXT & ~F.COMMAND, manejar_texto))
 app.add_handler(CallbackQueryHandler(sonidos_callback, pattern=r"^snd\|"))
 app.add_handler(CallbackQueryHandler(next_meme_handler, pattern="^meme_"))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(dl_|vdl_)"))
