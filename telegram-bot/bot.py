@@ -73,6 +73,27 @@ CATEGORIAS = {
     "shitpost": ["shitposting", "dankmemes"],
 }
 DB_FILE = "/tmp/economia.json"
+EXAMS_FILE = "/tmp/examenes.json"
+
+
+def cargar_examenes():
+    try:
+        with open(EXAMS_FILE, "r") as f:
+            datos = json.load(f)
+            return datos if isinstance(datos, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def guardar_examenes(datos):
+    try:
+        with open(EXAMS_FILE, "w") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=2)
+    except OSError:
+        logging.exception("No se pudieron guardar los exámenes")
+
+
+examenes_guardados = cargar_examenes()
 
 # --- BASE DE DATOS SIMPLE ---
 def cargar_db():
@@ -112,12 +133,21 @@ EMOJIS_R = {"R": "⚪", "SR": "🔵", "SSR": "🟡", "SSSR": "🌈"}
 
 # --- COMANDOS BÁSICOS ---
 async def start(u,c):
-    await u.message.reply_text("Hola Soy DANTE 👑\nUsa /help para ver los comandos")
+    await u.message.reply_text(
+        "🤖 DANTE BOT ACTIVO\n\n"
+        "/resolver - Resuelve ejercicios paso a paso\n"
+        "/examen <área> - Crea un examen de 5 preguntas\n"
+        "/respuestas <área> - Muestra la clave del último examen\n"
+        "/explicar <tema> - Explica un tema\n"
+        "/meme <tema> - Genera ideas para memes\n"
+        "/soporte - Chat con IA\n\n"
+        "Usa /help para ver todos los comandos."
+    )
 
 async def help(u,c):
     texto = (
         "DANTE BOT - COMANDOS\n"
-        "General: /start /help /ping /calcular /resolver /explicar /examen /frase /chiste /8ball /dado /coin /ppt /sorteo\n"
+        "General: /start /help /ping /calcular /resolver /explicar /examen /respuestas /frase /chiste /8ball /dado /coin /ppt /sorteo\n"
         "Diversion: /ship /cun /preniar /stickerpreniar /sticker /meme /picante /gato /perro /imagine\n"
         "Media: /playaudio /video /ytmp3 /yts /tt /fbmp3 /sonidos /creditos\n"
         "Economia: /balance /trabajar /diario /daily /robar /tiendaeco /tienda /comprar /gacha /tickets /inventario\n"
@@ -347,23 +377,132 @@ async def explicar(u, c):
         logging.exception("explicar error")
         await msg.edit_text(f"「✿」 Error al explicar: {e}")
 
+def clave_examen(chat_id, user_id, area):
+    area_normalizada = " ".join(area.lower().split())
+    return f"{chat_id}:{user_id}:{area_normalizada}"
+
+
+def extraer_json(texto):
+    texto = texto.strip()
+    if texto.startswith("```"):
+        texto = re.sub(r"^```(?:json)?\s*", "", texto)
+        texto = re.sub(r"\s*```$", "", texto)
+    inicio = texto.find("{")
+    fin = texto.rfind("}")
+    if inicio < 0 or fin <= inicio:
+        raise ValueError("La IA no devolvió JSON")
+    return json.loads(texto[inicio:fin + 1])
+
+
+def formatear_examen(datos, area):
+    preguntas = datos.get("questions") or datos.get("preguntas")
+    respuestas = datos.get("answers") or datos.get("respuestas")
+    if not isinstance(preguntas, list) or not isinstance(respuestas, list):
+        raise ValueError("Faltan preguntas o respuestas")
+    if len(preguntas) != 5 or len(respuestas) != 5:
+        raise ValueError("El examen no tiene exactamente 5 preguntas")
+
+    lineas = [
+        "CONCURSO DE CONOCIMIENTOS",
+        f"ÁREA: {area.upper()}",
+        "",
+    ]
+    for indice, pregunta in enumerate(preguntas, start=1):
+        numero = pregunta.get("number", pregunta.get("numero", indice))
+        enunciado = pregunta.get("question", pregunta.get("pregunta", ""))
+        opciones = pregunta.get("options", pregunta.get("opciones", {}))
+        if not enunciado or not isinstance(opciones, dict):
+            raise ValueError("Pregunta con formato inválido")
+        lineas.append(f"{numero}. {enunciado}")
+        for letra in ("a", "b", "c", "d"):
+            valor = opciones.get(letra) or opciones.get(f"{letra})")
+            if not valor:
+                raise ValueError("Faltan alternativas")
+            lineas.append(f"{letra}) {valor}")
+        lineas.append("")
+    lineas.append(f"💡 Escribe /respuestas {area} para ver la clave.")
+    return "\n".join(lineas), respuestas
+
+
 async def examen(u, c):
-    tema = " ".join(c.args).strip() if c.args else "General"
-    msg = await u.message.reply_text(f"「✿」 ⏳ Generando 5 ejercicios de {tema}...")
+    area = " ".join(c.args).strip()
+    if not area:
+        await u.message.reply_text(
+            "Usa: /examen Matemáticas\n"
+            "Ejemplos: /examen Ciencias Sociales, /examen Arte, "
+            "/examen Comunicación"
+        )
+        return
+
+    msg = await u.message.reply_text(
+        f"「✿」 ⏳ Generando examen de {area}..."
+    )
     try:
         respuesta = await _ai_completion(
-            "Genera exactamente 5 ejercicios de práctica en español, "
-            "sin resolverlos. Varía la dificultad.",
             (
-                f"Genera 5 ejercicios sobre: {tema}\n"
-                "Al final escribe: 💡 Cuando termines, puedes pedirme las respuestas."
+                "Eres un profesor experto. Devuelve ÚNICAMENTE JSON válido, "
+                "sin Markdown ni texto adicional. Crea un examen en español."
             ),
-            max_tokens=1000,
+            (
+                f"Crea exactamente 5 preguntas tipo test SOLO del área "
+                f'"{area}". Deben ser nuevas y de dificultad variada. '
+                "Cada una debe tener exactamente cuatro alternativas a, b, c y d. "
+                "Usa este esquema JSON exacto:\n"
+                '{"questions":[{"number":1,"question":"...","options":'
+                '{"a":"...","b":"...","c":"...","d":"..."}}],'
+                '"answers":[{"number":1,"letter":"b","explanation":"..."}]}'
+            ),
+            max_tokens=1800,
         )
-        await msg.edit_text(f"「✿」 5 EJERCICIOS DE {tema.upper()}:\n\n{respuesta[:3900]}")
-    except Exception as e:
+        datos = extraer_json(respuesta)
+        texto_examen, respuestas = formatear_examen(datos, area)
+        registro = {
+            "area": area,
+            "text": texto_examen,
+            "answers": respuestas,
+            "created_at": time.time(),
+        }
+        clave = clave_examen(
+            u.effective_chat.id,
+            u.effective_user.id,
+            area,
+        )
+        examenes_guardados[clave] = registro
+        guardar_examenes(examenes_guardados)
+        await msg.edit_text(texto_examen[:3900])
+    except Exception:
         logging.exception("examen error")
-        await msg.edit_text(f"「✿」 Error al generar el examen: {e}")
+        await msg.edit_text(
+            "❌ No pude generar el examen. Intenta nuevamente con /examen <área>."
+        )
+
+
+async def respuestas(u, c):
+    area = " ".join(c.args).strip()
+    if not area:
+        await u.message.reply_text("Usa: /respuestas Matemáticas")
+        return
+
+    clave = clave_examen(
+        u.effective_chat.id,
+        u.effective_user.id,
+        area,
+    )
+    registro = examenes_guardados.get(clave)
+    if not registro:
+        await u.message.reply_text(
+            f"❌ No encontré un examen reciente de {area} para ti.\n"
+            f"Primero usa /examen {area}"
+        )
+        return
+
+    lineas = [f"✅ CLAVE DE RESPUESTAS: {area.upper()}", ""]
+    for indice, respuesta in enumerate(registro.get("answers", []), start=1):
+        numero = respuesta.get("number", respuesta.get("numero", indice))
+        letra = respuesta.get("letter", respuesta.get("respuesta", "?"))
+        explicacion = respuesta.get("explanation", respuesta.get("explicacion", ""))
+        lineas.append(f"{numero}. {str(letra).lower()}) {explicacion}".rstrip())
+    await u.message.reply_text("\n".join(lineas)[:3900])
 async def ppt(u,c):
     opciones = ["piedra","papel","tijera"]
     bot = random.choice(opciones)
@@ -1291,7 +1430,8 @@ app = A().token(T).build()
 CMDS = {
     "start": start, "help": help, "ping": ping, "dado": dado, "coin": coin,
     "chiste": chiste, "frase": frase, "picante": picante, "bola8": bola8,
-    "calcular": calcular, "resolver": resolver, "explicar": explicar, "examen": examen,
+        "calcular": calcular, "resolver": resolver, "explicar": explicar,
+        "examen": examen, "respuestas": respuestas,
     "ppt": ppt, "ship": ship, "cun": cun, "preniar": preniar,
     "sorteo": sorteo, "meme": meme, "gato": gato, "perro": perro,
     "stickerpreniar": stickerpreniar, "sticker": sticker,
