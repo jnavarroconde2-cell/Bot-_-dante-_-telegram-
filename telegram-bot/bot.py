@@ -137,7 +137,7 @@ async def start(u,c):
     await u.message.reply_text(
         "🤖 DANTE BOT ACTIVO\n\n"
         "/resolver - Resuelve ejercicios paso a paso\n"
-        "/examen <área> - Crea un examen de 5 preguntas\n"
+        "/examen <área> - Crea examen + clave al toque\n"
         "/respuestas <área> - Muestra la clave del último examen\n"
         "/explicar <tema> - Explica un tema\n"
         "/meme <tema> - Genera ideas para memes\n"
@@ -422,7 +422,19 @@ def formatear_examen(datos, area):
                 raise ValueError("Faltan alternativas")
             lineas.append(f"{letra}) {valor}")
         lineas.append("")
-    lineas.append(f"💡 Escribe /respuestas {area} para ver la clave.")
+    lineas.extend([
+        "🔑 CLAVE DE RESPUESTAS",
+        "",
+    ])
+    for indice, respuesta in enumerate(respuestas, start=1):
+        numero = respuesta.get("number", respuesta.get("numero", indice))
+        letra = respuesta.get("letter", respuesta.get("respuesta", "?"))
+        explicacion = respuesta.get("explanation", respuesta.get("explicacion", ""))
+        lineas.append(
+            f"{numero}. {str(letra).lower()}) - {explicacion}".rstrip()
+        )
+    lineas.append("")
+    lineas.append(f"También puedes usar /respuestas {area}.")
     return "\n".join(lineas), respuestas
 
 
