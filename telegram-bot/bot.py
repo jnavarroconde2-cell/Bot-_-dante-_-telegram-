@@ -137,7 +137,7 @@ async def start(u,c):
     await u.message.reply_text(
         "🤖 DANTE BOT ACTIVO\n\n"
         "/resolver - Resuelve ejercicios paso a paso\n"
-        "/examen <área> - Crea examen + clave al toque\n"
+        "/examen <tema> - Crea examen + clave al toque\n"
         "/respuestas <área> - Muestra la clave del último examen\n"
         "/explicar <tema> - Explica un tema\n"
         "/meme <tema> - Genera ideas para memes\n"
@@ -442,9 +442,12 @@ async def examen(u, c):
     area = " ".join(c.args).strip()
     if not area:
         await u.message.reply_text(
-            "Usa: /examen Matemáticas\n"
-            "Ejemplos: /examen Ciencias Sociales, /examen Arte, "
-            "/examen Comunicación"
+            "❌ Usa: /examen <tema>\n\n"
+            "Ejemplos:\n"
+            "/examen Matemáticas\n"
+            "/examen Arte la buena salud\n"
+            "/examen Los gatos\n"
+            "/examen Historia WWI"
         )
         return
 
@@ -487,7 +490,7 @@ async def examen(u, c):
     except Exception:
         logging.exception("examen error")
         await msg.edit_text(
-            "❌ No pude generar el examen. Intenta nuevamente con /examen <área>."
+            "❌ No pude generar el examen. Intenta nuevamente con /examen <tema>."
         )
 
 
