@@ -9,6 +9,7 @@ import time
 import subprocess
 import re
 import asyncio
+import threading
 import aiohttp
 import sympy
 from io import BytesIO
@@ -28,9 +29,23 @@ from telegram.ext import (
 )
 from telegram import InputFile, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
 from PIL import Image, ImageDraw, ImageFont
+from flask import Flask, jsonify
+from waitress import serve
 import yt_dlp
 
 logging.basicConfig(level=logging.INFO)
+
+health_app = Flask("dante_health")
+
+
+@health_app.get("/dante/healthz")
+def dante_health():
+    return jsonify({"service": "DANTE Telegram Bot", "status": "ok"}), 200
+
+
+def run_health_server():
+    serve(health_app, host="0.0.0.0", port=5000)
+
 
 T = os.getenv("Token")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -1563,4 +1578,9 @@ app.add_handler(CallbackQueryHandler(next_meme_handler, pattern="^meme_"))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(dl_|vdl_)"))
 
 print(f"Bot DANTE iniciado con {len(CMDS)} comandos")
+threading.Thread(
+    target=run_health_server,
+    name="dante-health-server",
+    daemon=True,
+).start()
 app.run_polling()
